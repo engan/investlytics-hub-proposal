@@ -1,6 +1,8 @@
 Prosjektplan – Investlytics Hub
 ============================================
 
+![](investlytics-hero.png)
+
 Introduksjon og Målsetninger
 ----------------------------
 
@@ -473,7 +475,7 @@ gantt
 ```
 _(Tidslinjen over er et estimat for illustrasjon. Faktiske datoer og varigheter kan justeres etter behov og ressurser.)_
 
-### Labels & milestones
+### Etiketter til Issues og Pull Requests i GitHub
 
 | **Kategori**       | **Eksempel-label**                                                                 |
 |--------------------|-----------------------------------------------------------------------------------|
@@ -483,12 +485,25 @@ _(Tidslinjen over er et estimat for illustrasjon. Faktiske datoer og varigheter 
 | **Status (valgfritt)** | `status:todo`, `status:in-progress`, `status:review`, `status:done`         |
 | **Andre**          | `Good first issue`, `help wanted`                                                |
 
-**Milestone 0: Konsept & Grunnoppsett** - krav, arkitektur, repo + Docker/CI skeleton (fase 0).
-**Milestone 1: Sanntidsdata + Dashboard** - CoinGecko feed, WebSocket push, React dashboard (fase 1).
-**Milestone 2: Portefølje & AI-MVP** - JWT-auth, CEX-sync, /ai/crypto_predict, enkel NFT-visning (fase 2).
-**Milestone 3: Avansert Porteføljeanalyse** - Monte Carlo, on-chain-metrics, advanced-tab (fase 3).
-**Milestone 4: AI v2 & Integrasjoner** - bedre modeller, sentiment 2.0, flere CEX/DEX-integrasjoner, valgfri NFT-boost (fase 4).
-**Milestone 5: QA, Deploy & Launch** - E2E-tester, lasttest, produksjonsdeploy (fase 5).
+## Milepæler
+
+- **Milestone 0: Konsept & Grunnoppsett**  
+  Krav, arkitektur, repo + Docker/CI-skjelett (fase 0).
+
+- **Milestone 1: Sanntidsdata + Dashboard**  
+  CoinGecko-feed, WebSocket-push, React-dashboard (fase 1).
+
+- **Milestone 2: Portefølje & AI-MVP**  
+  JWT-auth, CEX-sync, `/ai/crypto_predict`, enkel NFT-visning (fase 2).
+
+- **Milestone 3: Avansert Porteføljeanalyse**  
+  Monte Carlo, on-chain-metrics, advanced-tab (fase 3).
+
+- **Milestone 4: AI v2 & Integrasjoner**  
+  Bedre modeller, sentiment 2.0, flere CEX/DEX-integrasjoner, valgfri NFT-boost (fase 4).
+
+- **Milestone 5: QA, Deploy & Launch**  
+  E2E-tester, lasttest, produksjonsdeploy (fase 5).
 
 GitHub-struktur
 ---------------
