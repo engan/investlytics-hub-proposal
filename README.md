@@ -154,6 +154,142 @@ _Forklaring:_ Frontend-klienten (webappen) kommuniserer med FastAPI-backenden vi
 
 Arkitekturen er modulær slik at nye datakilder eller moduler (f.eks. flere AI-modeller, flere børser) kan legges til uten store omveltninger. FastAPI-valget gir også automatisk dokumentasjon av API-et (Swagger UI), noe som er nyttig for både utviklere og eventuelle tredjepartsintegrasjoner. Løsningen planlegges containerisert (Docker) for enkel distribusjon, og kan settes opp i skytjenester for skalering ved behov.
 
+#### Rate Limiting
+
+For å forhindre misbruk av API-et og sikre rettferdig ressursbruk er det implementert **rate limiting**. Dette betyr at det er satt en grense på hvor mange forespørsler en enkelt bruker eller IP-adresse kan sende til API-et per tidsenhet. Hvis grensen overskrides, vil systemet returnere en feilmelding (HTTP 429 "Too Many Requests") og midlertidig blokkere ytterligere kall. Rate limiting beskytter tjenesten mot **spam** og **Denial of Service-angrep**, samtidig som det sørger for stabil ytelse for alle brukere. Den nåværende konfigurasjonen begrenser for eksempel antall API-kall per bruker til et rimelig nivå (f.eks. X antall kall per minutt; verdien kan justeres basert på belastning). Implementasjonen er gjort på servernivå ved hjelp av et mellomvare som overvåker og teller forespørsler.
+
+#### AI-cache
+
+Mange av analysene og innsiktene i Investlytics Hub genereres ved hjelp av AI-modeller og komplekse beregninger. For å forbedre responstiden og redusere unødvendig belastning er det innført en **AI-cache**. Dette innebærer at resultatene fra tunge AI-spørringer blir mellomlagret i en hurtiglager for gjenbruk. Hvis en bruker gjentar en identisk forespørsel (f.eks. en bestemt porteføljerapport eller markedsanalyse) innenfor et kort tidsrom, kan systemet levere det bufrede resultatet umiddelbart i stedet for å kjøre AI-beregningen på nytt.
+
+Cachingen er implementert slik at hver unike forespørsel (for eksempel definert av kombinasjonen av spørringsparametre eller AI-prompt) lagrer sitt resultat i minnet (eller en rask nøkkel/verdi-store) med en tidsbegrensning (TTL). Dersom de underliggende dataene (som markedspriser eller nyheter) oppdateres, vil relevante cachede resultater automatisk invaliders for å sikre at brukeren får oppdatert informasjon. **Fordelene** med AI-cachen er redusert responstid for brukeren, lavere kostnader (spesielt om eksterne AI-tjenester brukes og faktureres per kall), og mindre belastning på systemets ressurskrevende komponenter.
+
+#### WebSocket-protokoll 
+* **Endepunkt**  
+  `wss://api.investlytics.io/ws/{channel}?token=<JWT>`
+  *Eksempel:* `wss://api.investlytics.io/ws/prices?token=eyJhbGciOi...`
+
+* **Meldingsformat (schema-validerte JSON-pakker)**  
+  ```json
+  {
+    "type": "<event>",        // f.eks. "price_update", "auth_ok", "ping"
+    "ts":   1717672405123,    // UNIX-tid i millisekunder
+    "payload": { ... }        // Hendelsesspesifikt innhold
+  }
+  ``` 
+Fullt schema ligger i /schemas/ws\_message.json.
+
+*   **Autentisering** 
+JWT (HS256 / RS256) sendes som token-query-parameter.– Ved gyldig token svarer serveren med{"type":"auth\_ok","ts":}– Ugyldig eller utløpt token → tilkobling lukkes med **close-code 4401**.
+    
+*   **Heartbeat / keep-alive** 
+Server → klient: {"type":"ping","ts":} hvert **20 s**.Klient må svare innen **10 s** med{"type":"pong","ts":}.Mangel på “pong” eller manglende “ping” i **30 s** ⇒ server lukker forbindelsen (close-code 4000).
+    
+*   **Reconnect-logikk (eksponentiell back-off m. jitter)** 
+1 s → 2 s → 4 s → 8 s → 16 s (maks) + ±0-0.5 s tilfeldig jitter.Etter **5 min** stabil forbindelse nullstilles back-off-tellen.
+  
+#### Støttede WebSocket-close-koder
+
+| Kode | Betydning                 |
+| ---- | ------------------------- |
+| 1000 | Normal avslutning         |
+| 4000 | Heartbeat time-out        |
+| 4401 | Uautorisert / ugyldig JWT |
+| 4408 | Ugyldig meldings-schema   |
+| 4500 | Intern serverfeil         |
+    
+*   **Tillegg**
+– permessage-deflate er aktivert for å redusere båndbredde. 
+– Maks meldingsstørrelse: **64 KiB**; større meldinger gir close-code 4408. 
+
+DevOps-strategi 
+---------------
+
+For å kunne levere endringer raskt og pålitelig, samt drifte Investlytics Hub på en stabil måte, er det utarbeidet en DevOps-strategi. Dette omfatter kontinuerlig integrasjon og utrulling av kode, samt overvåking av systemet i produksjon for å fange opp problemer tidlig. DevOps-praksisene som er innført bidrar til en **smidig utviklingsprosess** og høy **driftsstabilitet**.
+
+#### CI/CD Pipeline 
+
+Prosjektet benytter **Continuous Integration/Continuous Deployment (CI/CD)** for automatisk bygging, testing og utrulling av applikasjonen. Hver gang ny kode pushes til repoet:
+
+1.  **Automatisk bygg og test:** Et CI-system (for eksempel GitHub Actions eller Jenkins) kjører en rekke skript som bygger prosjektet og kjører alle enhetstester og integrasjonstester. Dette verifiserer at ny kode ikke introduserer feil eller regressjoner. Koden gjennomgår også statisk analyse og linting for å sikre kvalitetsstandarder.
+    
+2.  **Kontinuerlig integrasjon:** Hvis testene passerer, blir endringene integrert og en ny byggeartifakt (f.eks. en docker-container eller et versjonsnummer) blir generert.
+    
+3.  **Deploy til miljøer:** Gjennom konfigurerte pipelines rulles applikasjonen automatisk ut. Vanligvis deployeres først til et **staging-miljø** der man kan gjøre slutt-testing i et produksjonslignende miljø. Når endringene er godkjent der, kan de promoteres til **produksjonsmiljøet**. Utrullingen kan være helautomatisert eller kreve manuell godkjenning basert på prosjektets behov.
+    
+4.  **Rollback og versjonshåndtering:** Pipeline-oppsettet inkluderer mekanismer for enkel rollback dersom en produksjonsutrulling skulle forårsake problemer. Alle versjoner er sporbare, og tidligere versjoner kan reinstalleres raskt ved behov.
+    
+
+Denne CI/CD-strategien, som er en forbedring av utviklingsprosessen, sikrer at nye funksjoner og feilrettinger kan leveres hyppig og med høy kvalitet. Den reduserer også risikoen for menneskelige feil ved utrulling, da det meste av prosessen er automatisert og forutsigbar.
+
+#### Observabilitet og overvåking 
+
+For å drifte Investlytics Hub proaktivt er det lagt stor vekt på **observabilitet**, det vil si applikasjonens evne til å gi innsikt i sin egen tilstand gjennom data. Dette omfatter logging, metrikk og alarmering:
+
+*   **Logging:** Applikasjonen logger relevante hendelser og feil med tilstrekkelig detaljgrad. Viktige handlinger (som brukerinnlogging, dataspørringer, AI-kall) logges informativt, mens feil og unntak logges som advarsler eller kritiske feil. Loggene samles og aggregeres ved hjelp av et logg-rammeverk. I produksjon kan loggene sendes til en sentral loggtjeneste (f.eks. Elasticsearch/Kibana eller en skybasert loggtjeneste) for analyse og historikk.
+    
+*   **Metrikker:** Systemet samler inn driftsmetrikk som CPU- og minnebruk, responstid for API-kall, antall aktive brukere, antall AI-forespørsler, treffrater i AI-cachen osv. Disse metrikkene lagres og vises i sanntid på et dashboard (for eksempel Grafana, DataDog eller Azure Monitor). Ved å følge med på slike metrikk kan teamet oppdage ytelsesavvik eller kapasitetsbehov tidlig.
+    
+*   **Overvåking og varsling:** Det er konfigurert helsesjekker og overvåkingsrutiner som kontinuerlig sjekker at kjernefunksjonene er oppe. Dersom en tjeneste går ned eller en unormal situasjon oppstår (for eksempel vedvarende høy feilrate på API-et, eller ingen respons fra AI-tjenesten), utløses alarmer. Ansvarlige utviklere eller driftspersonell varsles umiddelbart via e-post, SMS eller Slack, slik at tiltak kan iverksettes før sluttbrukere merker stort.
+    
+
+Tilsammen gir disse observabilitets-tiltakene et detaljert bilde av hvordan Investlytics Hub kjører i praksis. **Forbedringen** gjør det mulig å reagere raskt på problemer og å forstå systemets oppførsel, noe som er kritisk for å oppnå høy oppetid og god brukeropplevelse over tid.
+
+Sikkerhet
+---------
+
+Sikkerhet har høy prioritet i Investlytics Hub, gitt den sensitive naturen til finansielle data og brukertilliten som kreves. Prosjektet har derfor implementert flere **sikkerhetstiltak** og forbedringer for å beskytte både systemet og brukerne:
+
+*   **HTTPS overalt:** All kommunikasjon mellom frontend-klienten og serveren skjer over kryptert HTTPS. Dette forhindrer avlytting og «man-in-the-middle»-angrep ved overføring av data (inkludert JWT og andre sensitive data).
+    
+*   **Sikker databasebruk:** Databaseforespørsler gjøres ved hjelp av sikre metoder (f.eks. ORM eller parametrisert SQL) for å unngå SQL-injeksjon og sikre dataintegritet.
+    
+*   **Passord og hashing:** Brukerpassord lagres ikke i klartekst. Ved registrering hashes passord med en sterk enveis hash-funksjon (som bcrypt eller Argon2) kombinert med salt, slik at brukerinformasjon er beskyttet selv om databasen skulle kompromitteres.
+    
+
+I tillegg til disse generelle tiltakene er det gjennomført spesifikke forbedringer på sikkerhetsfronten:
+
+
+#### JWT-håndtering 
+
+Applikasjonen benytter **JSON Web Tokens (JWT)** for autentisering og autorisasjon av brukere. JWT brukes til å sikre at kun gyldige, autentiserte brukere får tilgang til sine data og sensitive funksjoner i Investlytics Hub. Som en del av forbedringene er JWT-håndteringen gjort mer robust og sikker:
+
+*   **Sikker signering:** Alle JWT er signert med en sterk hemmelig nøkkel (eller et asymmetrisk nøkkelpar) på serversiden. Nøkkelen holdes hemmelig i konfigurasjonen (se _Nøkkelhåndtering_ under Sikkerhet) slik at tokenene ikke kan forfalskes.
+    
+*   **Utløp og fornying:** Hvert JWT har et relativt kort levetid (exp claim) for å begrense hvor lenge en token er gyldig. Dette reduserer risikoen hvis en token skulle komme på avveie. Det er implementert støtte for **refresh tokens** slik at brukeren kan få nye JWT når de gamle utløper uten å måtte logge inn på nytt, alt håndtert på en sikker måte.
+    
+*   **Validering:** Backend validerer JWT i alle innkommende forespørsler for beskyttede endepunkter. Ugyldige eller utløpte token avvises med 401 Unauthorized. Valideringen kontrollerer signaturen, utløpstiden og nødvendige adgangsrettigheter (f.eks. roller eller tillatelser kodet inn i tokenens payload).
+    
+Ved å bruke JWT på denne måten får vi en **stateless** autentiseringsmekanisme som er skalerbar (serveren trenger ikke holde styr på sesjoner i minne) samtidig som sikkerheten ivaretas. Forbedringene sikrer at JWT-basert innlogging er i tråd med bransjens beste praksis, og integreres med frontend-klienten ved at token lagres trygt (for eksempel i en httpOnly cookie eller sikret lagring) for å forhindre XSS/angrep som forsøker å stjele token (jf. neste seksjon om sikkerhet).
+
+#### XSS-beskyttelse 
+
+For å beskytte brukerne mot **Cross-Site Scripting (XSS)**\-angrep er applikasjonen gjennomgått og herdet mot injeksjon av ondsinnet skript. XSS-angrep skjer typisk ved at angripere får lagt inn skript eller ondsinnet HTML-innhold som kjøres i andre brukeres nettlesere. Investlytics Hub unngår dette ved å:
+
+*   **Sanitere brukerinput:** All data som brukerne sender inn (for eksempel via skjemaer, søkefelt eller kommentarer) blir validert og renset. Eventuelle farlige tegn eller skript-tagger fjernes eller kodes om før data lagres eller vises.
+    
+*   **Escape output:** Brukerinnhold som vises i grensesnittet rendres på en trygg måte. Vi sørger for å ikke injisere rå HTML/JS fra brukerdata direkte i siden. Frontendrammeverket og serveren benytter kontekstuell escaping, slik at spesialtegn vises som tekst og ikke tolkes som kode.
+    
+*   **Content Security Policy (CSP):** Applikasjonen definerer en streng CSP header som begrenser hvor skript og innhold kan lastes fra. Dette gjør det vanskeligere for injisert kode å kontakte eksterne nettsteder eller kjøre uautoriserte funksjoner.
+    
+
+Disse tiltakene sammen bidrar til at risikoen for XSS-sårbarheter er minimert. Forbedringen adresserer et kritisk sikkerhetsaspekt slik at brukerne kan stole på at applikasjonen ikke vil kjøre uventet eller skadelig kode i nettleseren deres.
+
+#### Nøkkelhåndtering 
+
+Sikker håndtering av sensitive nøkler og hemmeligheter (som API-nøkler, JWT-signeringsnøkler, databasenøkler osv.) er essensielt for plattformens integritet. Investlytics Hub har innført klare retningslinjer og mekanismer for **nøkkelhåndtering**:
+
+*   **Ingen nøkler i kildekode:** Hemmelige nøkler lagres aldri direkte i repoet eller i selve kildekoden. I stedet benyttes konfigurasjonsfiler (som ikke sjekkes inn) eller miljøvariabler til å levere nødvendige nøkler ved oppstart.
+    
+*   **Sikre lagringssteder:** I produksjonsmiljø kjøres applikasjonen med nøkler hentet fra et sikkert lager, for eksempel en **Secrets Manager** (som Azure Key Vault, AWS Secrets Manager eller lignende), der tilgang er strengt kontrollert. Dette begrenser eksponeringen av hemmelig data.
+    
+*   **Begrenset tilgang:** Kun autoriserte personer og tjenester har tilgang til sensitive nøkler. Tilgangsstyring (IAM) og revisjonsspor er på plass slik at all bruk av nøkler kan spores og gamle nøkler kan roteres ved behov.
+    
+*   **Kryptering:** Nøkler og sensitive konfigurasjonsdata holdes kryptert i hvilende tilstand der det er mulig. For eksempel kan konfigurasjonsfiler være kryptert på server, og dekrypteres først ved oppstart av applikasjonen.
+    
+
+Gjennom disse tiltakene reduseres faren for at kompromitterte nøkler fører til sikkerhetsbrudd. Forbedringen sikrer at selv om kildekoden er åpen eller tilgjengelig for flere utviklere, forblir de mest sensitive nøklene beskyttet og håndtert på en forsvarlig måte.
+
 Teknologistakk
 --------------
 
@@ -201,7 +337,19 @@ Faser og milepæler (Roadmap)
 
 Prosjektet deles inn i klare faser for å sikre strukturert fremdrift. Hver fase har definerte milepæler og leveranser. Under følger en roadmap med faser fra konsept til lansering, inkludert en ekstra dedikert fase (Fase 4) for kryptoporteføljeanalyse som ønsket. Milepæler er uthevet for å markere viktige delmål (f.eks. ferdigstillelse av MVP).
 
-### Fase 0: Konseptualisering og Oppsett 
+#### Fase 0: Konseptualisering og Oppsett 
+
+<details style="margin-bottom: .8em;">
+<summary><strong>⬅ Åpne for arkitekturdiagram, fase 0</strong></summary>
+
+```mermaid
+flowchart TD
+    UI["React-basert frontend"] --> API[/"FastAPI\nbackend"/]
+    API --> DB[(Database)]
+    API -. integrasjon .-> N8N["n8n workflows"]
+```
+_Forklaring_: Her representerer UI brukergrensesnittet (React-app), API er FastAPI-backenden, DB er databaseserveren, og N8N er n8n-verktøyet for arbeidsflyter. Pilen fra UI til API viser at frontenden kaller backend-API’et. Backenden skriver til DB (pilen til databasen). Den stiplete linjen fra API til N8N indikerer at backenden trigges/integreres med n8n-workflows (for eksempel via webhooks eller planlagte jobber). Dette diagrammet er nå syntaktisk gyldig og gir et klart bilde av arkitekturen i fase 0.   
+</details> 
 
 **Mål:** Legge grunnlaget for prosjektet med klart design, arkitektur og utviklingsmiljø.
 
@@ -215,10 +363,9 @@ Prosjektet deles inn i klare faser for å sikre strukturert fremdrift. Hver fase
     
 *   **Proof-of-Concepts:** Utvikle enkle prototyper for høy-risiko elementer for å redusere usikkerhet: f.eks. et raskt skript for å hente data fra en børs-API via CCXT, teste et kall mot OpenAI API for å se responstid/kost, eller en liten React-app som viser data fra CoinGecko. Disse POC-ene sikrer at i senere faser kan vi bygge med trygghet på disse integrasjonene.
     
-*   **Milestone:** _Prosjektplan og arkitektur godkjent._ (Etter fase 1 skal vi ha en “spesifikasjon” og plan klar. Dette dokumentet – oppdatert prosjektplan – er en del av leveransen her. Utviklingsmiljø og repo er klart, slik at koding kan starte.)
-    
+*   **Milestone:** _Prosjektplan og arkitektur godkjent._ (Etter fase 1 skal vi ha en “spesifikasjon” og plan klar. Dette dokumentet – oppdatert prosjektplan – er en del av leveransen her. Utviklingsmiljø og repo er klart, slik at koding kan starte.) 
 
-### Fase 1: Grunnleggende MVP-funksjonalitet (Sanntidsdata & UI)
+#### Fase 1: Grunnleggende MVP-funksjonalitet (Sanntidsdata & UI)
 
 **Mål:** Bygge kjernen av MVP – sanntids markedsdatafunksjoner og grunnleggende brukergrensesnitt for tradingoversikt.
 
@@ -239,6 +386,7 @@ sequenceDiagram
     deactivate API
     User->>User: Oppdater ticker-komponent
 ```    
+
 </details> 
 
 *   **Backend – markedstjenester:** Implementere modul for markedsdata. Start med integrasjon mot en offentlig kilde (CoinGecko) for å trekke ut en liste av kryptovalutaer, priser og evt. historisk data for diagram. Sett opp endepunkter i FastAPI for “get prices”, “get market summary” osv. Implementer også en WebSocket-endepunkt for live oppdatering av pris (f.eks. kringkaste nye priser til klienter hvert 5. sekund eller når endringer skjer). Dette kan gjøres ved at backenden jevnlig henter oppdateringer fra f.eks. en børs WebSocket og pusher ut til tilkoblede klienter.
@@ -254,10 +402,20 @@ sequenceDiagram
 *   **Milestone:** _MVP kjernefunksjoner implementert:_ Systemet kan vise sanntidspriser og enkle grafer i frontend med data fra backend. Dette demonstreres evt. internt for å verifisere at sanntidskjeden (fra ekstern API til UI) fungerer.
     
 
-### Fase 2: Brukerportefølje, AI-analyse og digitale eiendeler (MVP fullføring)
+#### Fase 2: Brukerportefølje, AI-analyse og digitale eiendeler (MVP fullføring)
 
 <details style="margin-bottom: .8em;">
 <summary><strong>⬅ Åpne for sekvensdiagram, fase 2</strong></summary>
+
+```mermaid
+flowchart LR
+    ExternalAPI[Ekstern data-kilde] -->|finansdata| Backend[(FastAPI backend)]
+    Backend -->|lagrer data| DB[(Database)]
+    Backend -->|sender data| Frontend[React frontend]
+```    
+_Forklaring_: Dette flytdiagrammet (ikke i originalplanen) viser et mulig scenario i fase 2: en Ekstern data-kilde (f.eks. en børs-API) leverer finansdata til backenden. Backend prosesserer og lagrer data i DB, og sender nødvendige data videre til Frontend for visning til brukeren. Diagrammet ville understøtte teksten i fase 2 ved å gi leseren en rask visuell forståelse av hvordan kjernefunksjonen (dataflyt fra ekstern kilde til visning) fungerer. Om fase 2 ikke involverer eksterne datakilder, er et slikt diagram mindre relevant – da er det riktig at ingen diagram er inkludert.
+
+<strong>Sekvensdiagrammet som beskriver API-flyten med DB-cache og CEX-henting.</strong>
 
 ```mermaid
 sequenceDiagram
@@ -266,22 +424,21 @@ sequenceDiagram
     participant DB as PostgreSQL
     participant CEX as Binance API (via CCXT)
 
-    User->>API: GET /api/v1/portfolio  (JWT token)
+    User->>API: GET /api/v1/portfolio (JWT)
     activate API
-    API->>DB:  SELECT cached_saldo WHERE user_id
-    alt saldo nylig?
-        DB-->>API: rows (fresh)
-    else saldo eldre enn X min
-        DB-->>API: rows (stale / null)
-        API->>CEX: Hent kontobalanse (API-key)
-        CEX-->>API: JSON balanser
-        API->>DB:  UPSERT balanser (timestamp = now)
+    API->>DB: SELECT saldo WHERE user_id
+    alt Cache hit (fersk)
+        DB-->>API: saldo
+    else Cache miss / stale
+        DB-->>API: (tom / utdatert)
+        API->>CEX: Hent kontobalanse
+        CEX-->>API: JSON balanse
+        API->>DB: UPSERT balanse
     end
-    API-->>User: JSON portefølje + verdi
+    API-->>User: JSON portefølje
     deactivate API
-    User->>User: Render portefølje­tabell og doughnut-graf
-
-```    
+    User->>User: Tegn doughnut-graf
+``` 
 </details> 
 
 **Mål:** Utvide MVP med bruker-spesifikke funksjoner: porteføljeforvaltning, AI-drevet analysefunksjoner og enkel integrasjon av digitale eiendeler (NFT-visning). Etter denne fasen anses MVP som komplett.
@@ -303,31 +460,30 @@ sequenceDiagram
 *   **Milestone:** **MVP ferdigstilt** – Investlytics Hub v1 kan lanseres i lukket beta. Den oppfyller hovedmålene: en bruker kan logge inn, se sin portefølje (inkl. ev. NFT-er) oppdatert med sanntidspriser, få noen AI-baserte innsikter, og alt presentert i et brukervennlig dashboard. Kompleks NFT-funksjonalitet og avansert AI er ikke med, men plattformen er funksjonell og demonstrerer konseptet godt.
     
 
-### Fase 3: Krypto­portefølje­analyse & on-chain data (utvidelse etter MVP)
+#### Fase 3: Krypto­portefølje­analyse & on-chain data (utvidelse etter MVP)
 
 <details style="margin-bottom: .8em;">
 <summary><strong>⬅ Åpne for sekvensdiagram, fase 3</strong></summary>
 
 ```mermaid
 sequenceDiagram
-    participant User as Frontend
-    participant API  as FastAPI
-    participant SIM  as Monte-Carlo-motor
-    participant DB   as PostgreSQL
+    participant Bruker
+    participant Frontend
+    participant Backend
+    participant ML as AI/Analysemodul
+    participant DB as Database
 
-    User->>API: POST /api/v1/simulation/run  (payload = posisjoner)
-    activate API
-    API->>SIM:  Kjør 10 000 scenarier (payload)
-    activate SIM
-    SIM-->>API:  Resultat-dataset (percentiler + paths)
-    deactivate SIM
-    API->>DB:   INSERT sim_result (summary, raw)
-    API-->>User: 201 Created + sim_id
-    deactivate API
-
-    note over User: Frontend åpner WS\n/ws/simulation/{sim_id}\n→ streamer progress/paths
-
+    Bruker->>Frontend: Starter analyse (f.eks. laster opp porteføljedata)
+    Frontend->>Backend: Sender forespørsel med data (API-kall)
+    Backend->>DB: Lagrer rådata
+    Backend->>ML: Kaller AI-modul for analyse
+    ML-->>Backend: Returnerer analyseresultater
+    Backend-->>DB: Lagrer resultater (valgfritt)
+    Backend-->>Frontend: Sender analyseresultater (respons til frontend)
+    Frontend-->>Bruker: Viser resultater i dashbordet
 ```    
+
+_Forklaring_: Sekvensdiagrammet over viser stegene når en Bruker initierer en analyse gjennom frontenden. Frontenden kaller Backend (FastAPI) med input-data. Backenden lagrer data i databasen og sender data videre til en AI/Analysemodul (f.eks. en maskinlæringsmodell eller beregningskomponent). AI-modulen prosesserer data og returnerer resultatet til backenden. Backenden kan lagre resultatet i DB og sender så svaret tilbake til Frontend, som presenterer det for brukeren. Dette diagrammet gjør det enklere å følge med på de mange delene som er involvert i fase 3. Det er plassert i riktig fase (fase 3) siden det er her den avanserte analysen implementeres. Ved å inkludere dette sekvensdiagrammet i planen forbedres leserens forståelse av fase 3 betydelig.
 </details> 
 
 **Mål:** Dedikert fase for å implementere dypere porteføljeanalyse ved hjelp av Monte Carlo-simulering, visualiseringer, samt integrere on-chain data og kryptospesifikke indikatorer. (Dette er en ny foreslått fase for å forsterke analyse-delen av plattformen.)
@@ -347,37 +503,22 @@ sequenceDiagram
 *   **Milestone:** _Avansert porteføljeanalyse tilgjengelig._ Etter fase 4 vil brukeren kunne dykke dypt i porteføljens risiko og ytelse. Vi har nå differensiert Investlytics Hub som mer enn en tracker – det er et verktøy for analyse og prognose. Denne milepælen markerer en utgivelse (v1.5) til brukerne som er interessert i avansert funksjonalitet.
     
 
-### Fase 4: Avansert AI og videreutvikling
+#### Fase 4: Avansert AI og videreutvikling
 
 <details style="margin-bottom: .8em;">
 <summary><strong>⬅ Åpne for sekvensdiagram, fase 4</strong></summary>
 
 ```mermaid
-sequenceDiagram
-    participant User as Frontend
-    participant API  as FastAPI
-    participant News as Nyhets-/Tweets-API
-    participant AI   as NLP-modell (HF Transformers)
-    participant DB   as Redis-cache
-
-    User->>API: GET /api/v1/ai/sentiment?asset=BTC
-    activate API
-    API->>DB:  Check cache(BTC, last 15 min)
-    alt cache hit
-        DB-->>API: cached_score
-        API-->>User: cached_score (latency < 10 ms)
-    else cache miss
-        DB-->>API: null
-        API->>News: Hent siste 50 headlines + tweets om BTC
-        News-->>API: JSON tekster
-        API->>AI:   Analyse → sentiment‐score
-        AI-->>API:  {score: -0.12, mood: “svakt negativ”}
-        API->>DB:   SET cache (ttl 15 min)
-        API-->>User: sentiment‐score
-    end
-    deactivate API
-
+flowchart TD
+  trigger1[Planlagt trigger n8n] --> n8nWF[n8n workflow]
+  n8nWF -->|API-kall| extAPI[Ekstern finans API]
+  extAPI -->|data| n8nWF
+  n8nWF -->|webhook| backend[FastAPI backend]
+  backend -->|lagrer| db[(Database)]
+  backend -->|varsler| frontend[Frontend React]
 ```    
+
+_Forklaring_: Dette diagrammet viser en mulig automatiseringsflyt i fase 4: En trigger i n8n starter en workflow (f.eks. tidsstyrt hver natt). n8n workflow kaller en Ekstern API for å hente finansdata. Eksternt system sender data tilbake til n8n, som deretter kommuniserer med Backend (f.eks. via et API-endepunkt eller webhook i FastAPI). Backenden lagrer de nye dataene i DB og kan samtidig oppdatere Frontend eller sende et varsel slik at brukeren får ferske data. Et slikt diagram er nyttig for å vise kompleks samhandling mellom flere systemer. Dersom planen beskriver noe lignende i fase 4, ville dette diagrammet vært riktig plassert der. Hvis fase 4 derimot er mindre kompleks (f.eks. kun enkel integrasjon uten automasjon), klarer man seg kanskje uten et eget diagram.
 </details> 
 
 **Mål:** Bygge videre på AI-funksjonaliteten og andre forbedringer post-MVP, samt begynne å inkludere eventuelle utsatte funksjoner (som utvidet digital eiendel-håndtering eller flere integrasjoner).
@@ -396,7 +537,7 @@ sequenceDiagram
     
 *   **Milestone:** _Full funksjonalitet implementert._ Investlytics Hub har nå både kjernefunksjonene og “wow-faktor” funksjoner (avansert AI, sentiment, bred integrasjon) på plass i en stabil versjon 2.0. Vi er klare for siste finpuss, testing og deretter lansering.
     
-### Fase 5: Testing, kvalitetssikring & lansering
+#### Fase 5: Testing, kvalitetssikring & lansering
 
 <details style="margin-bottom: .8em;">
 <summary><strong>⬅ Åpne for sekvensdiagram, fase 5</strong></summary>
@@ -407,7 +548,7 @@ sequenceDiagram
     participant GH    as GitHub Repo
     participant CI    as GitHub Actions Runner
     participant Reg   as Docker Registry
-    participant Prod  as Cloud Host (→ K8s / VM)
+    participant Prod  as Cloud Host (K8s / VM)
 
     Dev->>GH: git push main
     activate GH
@@ -420,7 +561,6 @@ sequenceDiagram
     CI-->>GH: Status = ✔ green (shield badge)
     CI-->>Dev: Slack/Discord «Deploy suksess»
     deactivate CI
-
 ```    
 </details> 
 
@@ -475,7 +615,7 @@ gantt
 ```
 _(Tidslinjen over er et estimat for illustrasjon. Faktiske datoer og varigheter kan justeres etter behov og ressurser.)_
 
-### Etiketter til Issues og Pull Requests i GitHub
+#### Etiketter til Issues og Pull Requests i GitHub
 
 | **Kategori**       | **Eksempel-label**                                                                 |
 |--------------------|-----------------------------------------------------------------------------------|
@@ -485,7 +625,7 @@ _(Tidslinjen over er et estimat for illustrasjon. Faktiske datoer og varigheter 
 | **Status (valgfritt)** | `status:todo`, `status:in-progress`, `status:review`, `status:done`         |
 | **Andre**          | `Good first issue`, `help wanted`                                                |
 
-## Milepæler
+#### Milepæler
 
 - **Milestone 0: Konsept & Grunnoppsett**  
   Krav, arkitektur, repo + Docker/CI-skjelett (fase 0).
@@ -660,33 +800,64 @@ sequenceDiagram
 
 I dette eksemplet ser vi at frontend-brukeren utløser en AI-analyse via REST API-et. Backenden (API) henter først relevant markedsdata (kanskje trengs for kontekst), deretter kaller en ekstern AI-tjeneste. Svaret lagres og sendes tilbake til frontend som presenterer det for brukeren. Lignende flyt vil gjelde for andre operasjoner: f.eks. når brukeren åpner porteføljesiden vil frontend kalle et endepunkt /api/v1/portfolio hvorpå backenden henter siste priser, brukerens beholdninger fra DB (eller børs via API), kanskje NFT-listen via Moralis, og sammenstiller et svar. Disse sekvensene er planlagt nøye for å gi rask respons til brukeren til tross for mange bevegelige deler.
 
-### Risikovurdering og tiltak
+Risikovurdering og tiltak 
+-------------------------
 
-| # | Risiko | Sannsynlighet | Konsekvens | Risikoscore* | Tiltak / kontroll | Beredskapsplan |
-|---|--------|---------------|------------|--------------|--------------------|----------------|
-| **T-1** | Eksterne API (nedetid, rate-limit, endret kontrakt) | Høy | Høy | 9 | * Cache i Redis<br>* Retry + circuit-breaker<br>* Versjonspinne mot API-schema | * Bytt til alternativ leverandør (CoinMarketCap, Kaiko)<br>* Vis "degraded-mode" banner i UI |
-| **T-2** | Lekkasje av API-nøkler / JWT | Lav | Kritisk | 8 | * Secrets i .env + secret store<br>* AES-kryptert lagring i DB<br>* Pen-testing før prod | * Roll nøklene, tvangslogg ut brukere<br>* Varsle brukere iht. GDPR |
-| **T-3** | Al-prognoser er misvisende ("false confidence") | Medium | Medium | 6 | * Vis usikkerhetsintervall & disclaimer<br>* Benchmark mot naive modeller | * Slå av visning av prognosemodul<br>* Roll tilbake til forrige modell |
-| **O-1** | Cloud-kostnader overskrider budsjett ved trafikkpeak | Medium | Medium | 6 | * Autoskalere med caps<br>* Prismonitor i Grafana | * Midler COGS-budsjett fra mindre kritisk prosjekt |
-| **P-1** | Scope-creep / forsinkede leveranser | Høy | Medium | 6 | * Sprint-basert backlog<br>* "Must / Should / Could"-prioritering | * Kutt/later-tagge nice-to-have features |
-| **S-1** | Regulatorisk endring (MiCA, GDPR, KYC) | Lav | Høy | 5 | * Følg EU-/Finanstilsynet-høringer<br>* Modulær KYC-pipeline hvis handel aktiveres | * Stanse handel, tilby kun analyse, til ny compliance er klar |
+Selv med solide tekniske løsninger er det viktig å erkjenne potensielle risikoer knyttet til bruken av Investlytics Hub, samt beskrive hvordan disse risikoene håndteres. Nedenfor følger en risikovurdering av noen sentrale utfordringer, sammen med tiltak for å mitigere dem:
 
+#### Narrativ oversikt
 
-### Forklaring:
-1. **Kolonner**: Tabellen har seks hovedkolonner: `#`, `Risiko`, `Sannsynlighet`, `Konsekvens`, `Risikoscore*`, `Tiltak / kontroll`, og `Beredskapsplan`.
-2. **Radene**: Informasjonen er strukturert rad for rad, med hver risiko som en egen rad.
-3. **Lister inni celler**: For kolonnene `Tiltak / kontroll` og `Beredskapsplan` har jeg brukt stjerne (`*`) for å markere punkter i listen, slik at det blir lett å lese.
-4. **Fotnote**: Den oppgitt fotnoten under tabellen er også inkludert:
+*   **Modellfeil og unøyaktige analyser:** Plattformen benytter AI-modeller og algoritmer for å generere investeringsanalyser. Det er en iboende risiko for at modellene kan ta feil eller gi misvisende anbefalinger, enten grunnet begrensninger i treningsdata, bias eller uforutsette markedsforhold. **Tiltak:** Vi adresserer dette ved omfattende testing og validering av modellene (f.eks. backtesting mot historiske data for å se hvordan modellens anbefalinger hadde slått ut). Videre presenteres AI-analysene med passende **forbehold og transparens** – brukerne informeres om at analysene er generert av statistiske modeller som har usikkerhet. Vi oppfordrer til at brukeren anvender egen kritisk sans og eventuelt konsulterer en finansrådgiver for endelige beslutninger. Kontinuerlig oppdatering og forbedring av modellene basert på ny data og tilbakemeldinger bidrar også til å redusere denne risikoen over tid.
+    
+*   **Feilaktige markedsantakelser:** Investlytics Hub kan gjøre antakelser om markedet (f.eks. at historiske trender fortsetter, eller at visse korrelasjoner holder). Hvis markedet oppfører seg annerledes enn antatt – for eksempel ved plutselige krakk, regulatoriske endringer eller andre **svart svane**\-hendelser – kan anbefalingene være suboptimale eller gale. **Tiltak:** Systemet er designet for å være oppdatert med **sanntidsdata**, slik at analyser alltid bruker fersk informasjon. Vi inkluderer scenarioanalyser og stress-testing der det er relevant, for å illustrere hvordan porteføljer kan påvirkes under ekstreme forhold. Igjen tydeliggjøres det i brukergrensesnittet at alle prognoser har usikkerhet. Teamet overvåker markedsforholdene og vil justere modellene og antakelsene raskt dersom det oppdages systematiske avvik.
+    
+*   **Data-integritet og kildepålitelighet:** Investlytics Hub er avhengig av eksterne datakilder for markedspriser, finansnyheter osv. Feil eller forsinkelser i disse kildene kan påvirke plattformens output (for eksempel gi mangelfulle analyser). **Tiltak:** Vi benytter flere velrenommerte datakilder og har mekanismer for å kryssjekke data der det er mulig. Systemet har også innbygd håndtering for manglende data – hvis en kilde svikter, varsles det om problemet (jf. observabilitet) og eventuelt byttes til en alternativ kilde. Viktige beregninger har også valideringsregler som fanger opp åpenbart gale verdier og ignorerer dem.
+    
+*   **Brukerfeil og misbruk av innsikt:** Det finnes en risiko for at brukere feiltolker presenterte data eller ignorerer advarsler, noe som kan lede til dårlige investeringsbeslutninger. Alternativt kan ondsinnede aktører prøve å misbruke plattformen (f.eks. ved å trekke ut store datamengder eller lete etter sårbarheter). **Tiltak:** For det første har vi lagt inn pedagogiske forklaringer og kontekst rundt nøkkeltall og indikatorer i grensesnittet, slik at de blir enklere å forstå riktig. Videre er det implementert robuste **sikkerhetsmekanismer** (beskrevet tidligere: rate limiting, autentisering, mm.) som forhindrer scraping, misbruk og uautorisert tilgang. Brukervilkårene spesifiserer også at informasjonen som gis ikke er investeringsråd og at brukeren selv er ansvarlig for sine handlinger.
+    
+
+Gjennom denne risikovurderingen og de tilhørende tiltakene forsøker vi å sikre at Investlytics Hub forblir en nyttig og trygg tjeneste, selv i møte med usikkerhet og potensielle feil.
+
+#### Kvantitativ matrise
+| #   | Risiko                                              | Sannsynl. | Konsekv. | Score* | Tiltak / kontroll                                                         | Beredskap |
+|-----|-----------------------------------------------------|-----------|----------|-------|---------------------------------------------------------------------------|-----------|
+| T-1 | Eksterne API (nedetid / rate-limit / kontrakt-endring) | Høy       | Høy      | 9     | Redis-cache, retry + circuit-breaker,<br>versjonspinne mot schema          | Bytt leverandør, “degraded-mode” banner |
+| T-2 | Lekkasje av API-nøkler / JWT                        | Lav       | Kritisk  | 8     | Secrets-manager, AES-kryptert lagring,<br>tvungen key-rotasjon             | Tvangslogg ut brukere, GDPR-varsel |
+| T-3 | AI-prognoser gir «false confidence»                 | Medium    | Medium   | 6     | 95 % CI + disclaimer,<br>benchmark mot naive modeller                     | Slå av modulen, rollback modell |
+| O-1 | Cloud-kostnader ved trafikk-peak                    | Medium    | Medium   | 6     | Autoscaling caps, kostnad-dashboard i Grafana                             | Flytte budsjett fra mindre kritisk prosjekt |
+| P-1 | Scope-creep / forsinkelser                          | Høy       | Medium   | 6     | Sprint-backlog, MoSCoW-prioritering                                       | Kutte/later-tagge nice-to-have |
+| S-1 | Regulatorisk endring (MiCA, GDPR, KYC)              | Lav       | Høy      | 5     | Følge høringer, modulær KYC-pipeline                                      | Pausere handel, kun analyse |
    ```markdown
    * Risikoscore = Sannsynlighet (1–3) × Konsekvens (1–3)
    ```
+
+#### Forklaring:
+1. **Kolonner**: Tabellen har seks hovedkolonner: `#`, `Risiko`, `Sannsynlighet`, `Konsekvens`, `Risikoscore*`, `Tiltak / kontroll`, og `Beredskapsplan`.
+2. **Radene**: Informasjonen er strukturert rad for rad, med hver risiko som en egen rad.
+3. **Lister inni celler**: For kolonnene `Tiltak / kontroll` og `Beredskapsplan` har jeg brukt stjerne (`*`) for å markere punkter i listen, slik at det blir lett å lese.
+
+Overholdelse og juridisk etterlevelse
+-------------------------------------
+
+I utvikling og drift av Investlytics Hub tas det hensyn til gjeldende lover, forskrifter og etiske retningslinjer for både datahåndtering og finansiell informasjon. Nedenfor beskrives sentrale områder for compliance og hvordan prosjektet etterlever dem:
+
+*   **Personvern (GDPR):** Tjenesten overholder prinsippene i EUs personvernforordning (GDPR). Personlige opplysninger om brukerne (som navn, e-post, porteføljeopplysninger) samles kun inn med gyldig samtykke og brukes utelukkende for definerte formål innen plattformen. Brukere har rett til innsyn i, eksport av og sletting av sine data. Data lagres sikkert og anonymiseres eller pseudonymiseres der det er mulig. Vi har opprettet interne rutiner for håndtering av personopplysninger, inkludert databehandleravtaler med eventuelle tredjepartsleverandører.
+    
+*   **Finansiell rådgivning og ansvarsfraskrivelse:** Investlytics Hub tilbyr analyse og informasjon, men er **ikke en autorisert finansiell rådgiver**. For å etterleve juridiske krav og bransjenormer, inkluderer vi tydelige ansvarsfraskrivelser i produktet. Det presiseres at innsikten som gis er generell og ikke tatt frem av en menneskelig rådgiver med kjennskap til den enkeltes situasjon. Brukerne gjøres oppmerksomme på at de selv er ansvarlige for investeringsbeslutninger de tar, og at de bør rådføre seg med en profesjonell rådgiver dersom nødvendig. Dette er viktig for å unngå å komme i konflikt med regelverk som krever konsesjon for individuell investeringsrådgivning.
+    
+*   **Sikkerhetsstandarder og -sertifiseringer:** Ved håndtering av finansielle data og personopplysninger legger vi vekt på å følge anerkjente sikkerhetsstandarder. Om nødvendig kan det gjennomføres **sikkerhetsrevisjoner** eller sertifiseringer (f.eks. ISO 27001 for informasjonssikkerhet) for å dokumentere at vi følger beste praksis. Systemet er også i stor grad designet etter **OWASP-retningslinjer** for å unngå vanlige sårbarheter.
+    
+*   **Åpen kildekode og lisenser:** (Hvis relevant) Prosjektet benytter enkelte open source-biblioteker og verktøy. Vi sørger for å overholde lisensvilkårene for disse, og kildekoden for Investlytics Hub som helhet er lisensiert under en åpen/kildekode-lisens (f.eks. MIT eller Apache 2.0), noe som er angitt i repositoriets LICENSE-fil. All bruk av tredjepartskode er kreditert, og vi følger oppdateringer for å unngå lisensbrudd.
+    
+
+Gjennom disse tiltakene og retningslinjene sikrer vi at Investlytics Hub drives i tråd med juridiske krav og etiske forventninger. Compliance-arbeidet er en kontinuerlig prosess; vi følger med på endringer i lovverket og tilpasser rutiner deretter, slik at både brukernes rettigheter og prosjektets omdømme ivaretas.
 
 ### Ikke-funksjonelle hensyn (må ivaretas allerede i MVP)
 
 | **Tema**               | **Detaljer / anbefalte tiltak**                                                                 |
 |------------------------|-----------------------------------------------------------------------------------------------|
 | **Feilhåndtering**     | - Detaljert, strukturert logging i backend (INFO / WARN / ERROR)                               <br> - Håndterer tap av eksterne API elegant (time-outs, retries, circuit-breaker) <br> - Frontend viser brukervennlig feilmelding (f.eks. «Tjenesten er utilgjengelig, prøv igjen senere») i stedet for å krasje |
-| **Sikkerhet**          | - Input-validering via Pydantic                                                               <br> - Stram CORS-policy i produksjon (kun godkjente domener) <br> - Hemmelige nøkler kun på server (.env / secret-store), aldri til klienten <br> - Klar for JWT / OAuth2 når brukerprofiler innføres <br> - Rate-limiting på utsatte endepunkter |
+| **Sikkerhet**          | - Input-validering via Pydantic                                                               <br> - Stram CORS-policy i produksjon (kun godkjente domener) <br> - Hemmelige nøkler kun på server (.env / secret-store), aldri til klienten <br> - Klar for JWT / OAuth2 når brukerprofiler innføres <br> - Se seksjonen «Rate Limiting» for detaljer |
 | **Skalerbarhet**       | - Horisontal skalering av backend bak load-balancer                                            <br> - DB-indekser + replikering når lesevolum øker <br> - Aggressiv Redis-cache for tunge eller hyppige kall <br> - n8n på egen node ved mange workflows <br> - Asynkrone jobber (Celery / RQ) for CPU-tunge prosesser |
 | **Brukeropplevelse (UX)** | - Responsivt design (desktop + mobil)                                                       <br> - Lys/mørk temavelger <br> - Interaktive grafer (zoom, hover-tooltip) <br> - Drag-and-drop-oppsett av dashboard-widgets (post-MVP) <br> - Løpende insanking av brukerfeedback |
 | **Modularitet / kodehygiene** | - Nye features = egne moduler / tjenester                                                <br> - Unngå duplisering – felles util-pakker <br> - Streng PR-regler og code-review for isolerte endringer |
@@ -707,157 +878,8 @@ I dette eksemplet ser vi at frontend-brukeren utløser en AI-analyse via REST AP
 
 ----
 <details>
-<summary><strong>Tillegg - meta-notat fra Gemini 2.5 Pro</strong></summary>
+<summary><strong>Seksjon for tillegg</strong></summary>
 
-Dette er en utrolig grundig og velstrukturert prosjektplan! Du har dekket de aller fleste aspekter som kreves for et komplekst fullstack-prosjekt, fra arkitektur og teknologi til roadmap og utviklingskonvensjoner. Det er tydelig at det ligger mye tankearbeid bak.
-
-Når det er sagt, siden du spør, her er noen få punkter du kanskje kan reflektere over eller vurdere å tilføye for å berike planen ytterligere. Dette er ikke kritikk, men snarere forslag til "prikken over i-en" eller ting som kan være nyttige å ha i bakhodet:
-
-1.  **MVP – Vær Brutalt Ærlig med Scope:**
-    
-    *   Planen din definerer en MVP, men selv innenfor MVP-fasene er det mange ambisiøse delmål. For et porteføljeprosjekt (spesielt hvis du utvikler alene) er det _ekstremt_ lett for scope creep.
-        
-    *   **Tilføyelse/Refleksjon:** Vurder å definere en "MVP av MVP-en" eller en "Fase 0.5" som KUN inneholder det _absolutt minimale_ for å vise _én_ kjernefunksjonalitet ende-til-ende på en imponerende måte. For eksempel:
-        
-        *   Backend + Frontend + Én enkel Backtrader-strategi (kanskje med hardkodet data i starten) + Visualisering av resultat.
-            
-    *   Å få _noe_ komplett og polert tidlig gir motivasjon og et konkret utgangspunkt for resten. Alt annet kan bygges på derfra. Tidsestimatene dine (f.eks. 1 uke for MC-integrasjon) er optimistiske hvis du støter på uforutsette problemer.
-        
-2.  **Konkretisering av "PineScript-oversettelse":**
-    
-    *   Planen nevner at "utvalgte strategier vil bli manuelt overført/oversatt til Python". Dette er et nøkkelpunkt som kan være svært tidkrevende.
-        
-    *   **Tilføyelse/Refleksjon:** For MVP, kanskje spesifiser _nøyaktig én_ enkel PineScript-strategi du vil oversette (f.eks. en dobbel SMA crossover). Dokumenter prosessen med å "dekonstruere" PineScript-logikken og implementere den i Backtrader. Dette blir i seg selv en verdifull del av prosjektet – å vise hvordan du analytisk overfører logikk mellom systemer. Full automatisk parsing er et eget, stort prosjekt.
-        
-3.  **AI-modulens Realisme for MVP:**
-    
-    *   "AI-analysemodul" er spennende, men kan også være et tidssluk. Bruk av HuggingFace Transformers lokalt krever litt oppsett og ressursstyring.
-        
-    *   **Tilføyelse/Refleksjon:** For MVP, vurder om en _enda enklere_ AI-integrasjon er tilstrekkelig, eller om den kan skyves helt ut av den aller første MVP-leveransen. Kanskje starte med å kalle et eksternt API for sentiment (som du nevner) for å bevise konseptet, før du eventuelt bygger noe lokalt. Hvis målet er å vise Python-kompetanse, er en lokal modell bra, men veit det opp mot tidsbruk.
-        
-4.  **Datakilder og Robusthet:**
-    
-    *   Avhengighet av eksterne API-er (CoinGecko, SolanaFM, Alpha Vantage) er uunngåelig, men de kan endre seg, ha rate limits, eller være nede.
-        
-    *   **Tilføyelse/Refleksjon:** Under "Viktige hensyn", kanskje legg til et punkt om "Strategi for håndtering av eksterne API-feil/endringer". For MVP er det greit med enkel feilhåndtering, men det er godt å vise bevissthet rundt det. For et porteføljeprosjekt kan du også vurdere å ha fallback-mekanismer eller i det minste god logging når et API feiler, slik at du kan vise hvordan du håndterer det.
-        
-5.  **Brukerhistorier / User Stories (selv for et porteføljeprosjekt):**
-    
-    *   Selv om du er "brukeren", kan det hjelpe å formulere noen enkle brukerhistorier for hver kjernefunksjon. Dette tvinger deg til å tenke fra et brukerperspektiv og kan hjelpe med å prioritere funksjonalitet.
-        
-    *   **Tilføyelse/Refleksjon:** Under "Roadmap og milepæler", for hver fase, kan du vurdere å legge til en setning som "Som en bruker ønsker jeg å [gjøre X] slik at jeg kan [oppnå Y]".
-        
-        *   Eksempel Fase 2: "Som en bruker ønsker jeg å velge en strategi og en aksje, og se en graf over hvordan strategien ville ha prestert historisk, slik at jeg kan vurdere strategiens potensial."
-            
-6.  **"Wow"-faktor og Unikhet – Spissing:**
-    
-    *   Prosjektet er bredt og dekker mange teknologier. Vurder om det er _ett_ spesifikt område du vil at skal skinne ekstra mye, eller en unik kombinasjon.
-        
-    *   **Tilføyelse/Refleksjon:** Er det kombinasjonen av tradisjonell trading-analyse _med_ NFT-data og AI-sentiment som er den virkelige "unike salgsproposisjonen" for prosjektet? Hvis ja, sørg for at disse elementene virkelig fremheves i demoen og dokumentasjonen.
-        
-7.  **Læringsmål og Refleksjon (for porteføljeverdi):**
-    
-    *   Siden dette er et porteføljeprosjekt, er din egen læring og evnen til å reflektere over prosessen viktig.
-        
-    *   **Tilføyelse/Refleksjon:** Vurder å legge til en liten seksjon (kanskje i ROADMAP.md eller en egen LEARNINGS.md) hvor du planlegger å dokumentere:
-        
-        *   De største tekniske utfordringene du møtte og hvordan du løste dem.
-            
-        *   Viktige designvalg du tok og hvorfor.
-            
-        *   Hva du ville gjort annerledes hvis du startet på nytt.
-            
-    *   Dette viser en moden tilnærming til utvikling.
-        
-8.  **Etiske Betraktninger (kort):**
-    
-    *   Finansielle verktøy og AI har etiske implikasjoner (selv i et demoprosjekt).
-        
-    *   **Tilføyelse/Refleksjon:** En kort setning under "Viktige Hensyn" eller i introduksjonen om at "prosjektet er for demonstrasjons- og utdanningsformål, og utgjør ikke finansiell rådgivning" kan være lurt. Hvis AI-modulen blir mer avansert, kan det være relevant å nevne bias i data/modeller.
-        
-Planen din er allerede på et veldig høyt nivå. Disse punktene er ment som finjusteringer og mat for tanken for å potensielt heve det _enda_ et hakk, spesielt med tanke på å presentere det som et imponerende porteføljeprosjekt.
-
-Lykke til – dette blir utrolig spennende å følge med på (om det blir offentlig)!
-
-</details>
-
-<details>
-<summary><strong>Tillegg - meta-notat: Hva kan oppnås med prosjektet</strong></summary>
-
-**Hva "Investlytics Hub" Kan Utføre (Kjernefunksjonalitet):**
-
-Prosjektet vil resultere i et **integrert, interaktivt dashboard** som gir brukere muligheten til å:
-
-1.  **Analysere Finansielle Investeringer:**
-    
-    *   **Kjøre Monte Carlo-simuleringer:** Forstå potensiell risiko og avkastning for porteføljer eller enkeltinvesteringer basert på ulike scenarier.
-        
-    *   **Backteste Tradingstrategier:** Evaluere historisk ytelse av tradingstrategier (inspirert av PineScript) på aksjer eller kryptovaluta ved hjelp av Backtrader.
-        
-    *   **Visualisere Markedsdata:** Se sanntids- og historiske priser, samt trendlinjer for utvalgte aktiva.
-        
-2.  **Overvåke og Analysere NFT-er (Solana):**
-    
-    *   **Se egen NFT-portefølje:** Ved å koble til Phantom Wallet, kan brukere få en oversikt over sine Solana-baserte NFT-er.
-        
-    *   **Spore NFT-kolleksjoner:** Overvåke floor prices for spesifikke NFT-kolleksjoner og motta varsler ved prisendringer (f.eks. hvis en pris faller under en satt terskel).
-        
-3.  **Få AI-drevet Innsikt (Valgfritt, men ambisjon):**
-    
-    *   **Analysere Markedssentiment:** Få en indikasjon på det generelle markedssentimentet basert på analyse av nyhetskilder eller sosiale medier ved hjelp av en lokal LLM eller sentimentmodell.
-        
-4.  **Automatisere Oppgaver (via n8n):**
-    
-    *   **Periodisk Datahenting:** Automatisk oppdatere markedsdata.
-        
-    *   **Varsling:** Sende varsler basert på forhåndsdefinerte kriterier (f.eks. NFT-pris, strategisignaler).
-        
-    *   **Simulert Handelsutførelse:** Konseptuelt trigge (simulerte) handler på en plattform som Pionex basert på signaler fra tradingstrategier.
-        
-
-**Hva Du Oppnår med Prosjektet:**
-
-Ved å fullføre "Investlytics Hub" vil du oppnå flere verdifulle ting, spesielt med tanke på din profesjonelle utvikling og portefølje:
-
-1.  **Demonstrere Omfattende Fullstack-Kompetanse:**
-    
-    *   Du viser evne til å designe, utvikle og integrere alle lag i en moderne webapplikasjon:
-        
-        *   **Frontend:** React, TailwindCSS, datavisualisering (Recharts/D3.js).
-            
-        *   **Backend:** Python, FastAPI, API-design, databaseinteraksjon (SQLAlchemy, PostgreSQL/SQLite), caching (Redis).
-            
-        *   **DevOps & Infrastruktur:** Docker, Docker Compose, CI/CD (GitHub Actions), hosting på skytjenester (Vercel, Railway/Render).
-            
-2.  **Vise Spesialisert Kunnskap innen FinTech og Web3:**
-    
-    *   **Finansiell Modellering:** Praktisk anvendelse av Monte Carlo-simuleringer.
-        
-    *   **Algoritmisk Trading:** Forståelse for og implementasjon av backtesting av tradingstrategier (fra PineScript til Python/Backtrader).
-        
-    *   **Kryptovaluta og NFT-er:** Integrasjon med blokkjededata (Solana), wallet-interaksjon (Phantom SDK), og forståelse for NFT-markeder.
-        
-3.  **Bevise Evne til Systemintegrasjon og Automatisering:**
-    
-    *   Du demonstrerer at du kan koble sammen ulike systemer, API-er (både interne og eksterne), og automatisere komplekse workflows ved hjelp av verktøy som n8n.
-        
-4.  **Fremheve Ferdigheter innen AI/Maskinlæring (hvis implementert):**
-    
-    *   Integrasjon av sentimentanalyse eller andre AI-drevne innsikter viser at du kan anvende AI-teknikker i en praktisk kontekst.
-        
-5.  **Bygge et Imponerende Porteføljeprosjekt:**
-    
-    *   Et vel-dokumentert, åpent kildekodeprosjekt av denne størrelsen og kompleksiteten vil være et svært sterkt kort overfor potensielle arbeidsgivere eller samarbeidspartnere. Det viser initiativ, teknisk dybde, og evne til å fullføre et krevende prosjekt.
-        
-    *   Profesjonell bruk av GitHub (issues, milestones, CI/CD, god dokumentasjon) vil ytterligere styrke inntrykket.
-        
-6.  **Personlig Læring og Utvikling:**
-    
-    *   Du vil tilegne deg dyp praktisk erfaring med en rekke moderne teknologier og konsepter, noe som øker din markedsverdi som utvikler.
-        
-    *   Du vil løse reelle tekniske utfordringer og bygge problemløsningsevner.
-        
-
-Kort sagt, "Investlytics Hub" er ikke bare et dashboard; det er en **demonstrasjon av din evne til å bygge sofistikerte, datadrevne applikasjoner som opererer i skjæringspunktet mellom finans, teknologi og kunstig intelligens.** Det viser at du kan ta en kompleks idé fra konsept til et fungerende, vel-arkitektert produkt.
+Sett teksten inn her
 
 </details>
