@@ -401,7 +401,6 @@ sequenceDiagram
     
 *   **Milestone:** _MVP kjernefunksjoner implementert:_ Systemet kan vise sanntidspriser og enkle grafer i frontend med data fra backend. Dette demonstreres evt. internt for å verifisere at sanntidskjeden (fra ekstern API til UI) fungerer.
     
-
 #### Fase 2: Brukerportefølje, AI-analyse og digitale eiendeler (MVP fullføring)
 
 <details style="margin-bottom: .8em;">
@@ -412,33 +411,37 @@ flowchart LR
     ExternalAPI[Ekstern data-kilde] -->|finansdata| Backend[(FastAPI backend)]
     Backend -->|lagrer data| DB[(Database)]
     Backend -->|sender data| Frontend[React frontend]
-```    
+``` 
+
 _Forklaring_: Dette flytdiagrammet (ikke i originalplanen) viser et mulig scenario i fase 2: en Ekstern data-kilde (f.eks. en børs-API) leverer finansdata til backenden. Backend prosesserer og lagrer data i DB, og sender nødvendige data videre til Frontend for visning til brukeren. Diagrammet ville understøtte teksten i fase 2 ved å gi leseren en rask visuell forståelse av hvordan kjernefunksjonen (dataflyt fra ekstern kilde til visning) fungerer. Om fase 2 ikke involverer eksterne datakilder, er et slikt diagram mindre relevant – da er det riktig at ingen diagram er inkludert.
 
 <strong>Sekvensdiagrammet som beskriver API-flyten med DB-cache og CEX-henting.</strong>
 
 ```mermaid
 sequenceDiagram
-    participant User as Frontend-klient
-    participant API as FastAPI Backend
-    participant DB as PostgreSQL
-    participant CEX as Binance API (via CCXT)
+    participant User     as "Frontend-klient"
+    participant API      as "FastAPI backend"
+    participant DB       as "PostgreSQL"
+    participant CEX      as "Binance API via CCXT"
 
-    User->>API: GET /api/v1/portfolio (JWT)
+    User  ->> API : GET /api/v1/portfolio (JWT)
     activate API
-    API->>DB: SELECT saldo WHERE user_id
-    alt Cache hit (fersk)
-        DB-->>API: saldo
-    else Cache miss / stale
-        DB-->>API: (tom / utdatert)
-        API->>CEX: Hent kontobalanse
-        CEX-->>API: JSON balanse
-        API->>DB: UPSERT balanse
+    API   ->> DB  : SELECT saldo WHERE user_id
+
+    alt Cache hit
+        DB  -->> API : saldo
+    else Cache miss
+        DB  -->> API : (tom)
+        API ->> CEX : hent kontobalanse
+        CEX -->> API : JSON balanse
+        API ->> DB  : UPSERT balanse
     end
-    API-->>User: JSON portefølje
+
+    API  -->> User : JSON portefølje
     deactivate API
-    User->>User: Tegn doughnut-graf
+    User ->> User : tegn doughnut-graf
 ``` 
+
 </details> 
 
 **Mål:** Utvide MVP med bruker-spesifikke funksjoner: porteføljeforvaltning, AI-drevet analysefunksjoner og enkel integrasjon av digitale eiendeler (NFT-visning). Etter denne fasen anses MVP som komplett.
