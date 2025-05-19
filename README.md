@@ -404,7 +404,7 @@ sequenceDiagram
 #### Fase 2: Brukerportefølje, AI-analyse og digitale eiendeler (MVP fullføring)
 
 <details style="margin-bottom: .8em;">
-<summary><strong>⬅ Åpne for sekvensdiagram, fase 2</strong></summary>
+<summary><strong>⬅ Åpne for dataflytdiagram (overordnet nivå), fase 2</strong></summary>
 
 ```mermaid
 flowchart LR
@@ -415,7 +415,10 @@ flowchart LR
 
 _Forklaring_: Dette flytdiagrammet (ikke i originalplanen) viser et mulig scenario i fase 2: en Ekstern data-kilde (f.eks. en børs-API) leverer finansdata til backenden. Backend prosesserer og lagrer data i DB, og sender nødvendige data videre til Frontend for visning til brukeren. Diagrammet ville understøtte teksten i fase 2 ved å gi leseren en rask visuell forståelse av hvordan kjernefunksjonen (dataflyt fra ekstern kilde til visning) fungerer. Om fase 2 ikke involverer eksterne datakilder, er et slikt diagram mindre relevant – da er det riktig at ingen diagram er inkludert.
 
-<strong>Sekvensdiagrammet som beskriver API-flyten med DB-cache og CEX-henting.</strong>
+</details> 
+
+<details style="margin-bottom: .8em;">
+<summary><strong>⬅ Åpne for sekvens – /portfolio API med cache og CEX-reserve, fase 2</strong></summary>
 
 ```mermaid
 sequenceDiagram
@@ -441,7 +444,6 @@ sequenceDiagram
     deactivate API
     User ->> User : tegn doughnut-graf
 ``` 
-
 </details> 
 
 **Mål:** Utvide MVP med bruker-spesifikke funksjoner: porteføljeforvaltning, AI-drevet analysefunksjoner og enkel integrasjon av digitale eiendeler (NFT-visning). Etter denne fasen anses MVP som komplett.
