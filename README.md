@@ -883,8 +883,279 @@ Gjennom disse tiltakene og retningslinjene sikrer vi at Investlytics Hub drives 
 
 ----
 <details>
-<summary><strong>Seksjon for tillegg</strong></summary>
+<summary><strong>Angående implementasjon: Aksjer og valutapar</strong></summary>
 
-Sett teksten inn her
+Plan for utvidelse av kryptoplattform til aksjer og valutapar
+=============================================================
+
+Introduksjon
+------------
+
+For å utvide en eksisterende kryptovaluta-sporingsplattform til også å støtte aksjer og valutapar (Forex), trengs en helhetlig plan. Målet er å speile funksjonaliteten fra TradingView – dvs. sanntidskurser, historiske grafer, tekniske indikatorer, brukerportefølje (inkludert Monte Carlo-simulering), samt import av saldo fra meglere via API. Nedenfor presenteres en plan med anbefalinger inndelt i fem hovedområder, etterfulgt av en trinnvis implementeringsstrategi.
+
+1\. API-leverandører for aksjer og valuta (market data)
+-------------------------------------------------------
+
+Det første steget er å velge pålitelige datakilder for markedsdata om aksjer og valuta. Både gratis og kommersielle API-er finnes:
+
+*   **Alpha Vantage** – Tilbyr bred dekning av finansmarkeder. API-et leverer sanntids- og historiske kurser for aksjer globalt, valutakurser (FX), kryptovaluta m.m., samt over 60 tekniske indikatorer[alphavantage.co](https://www.alphavantage.co/#:~:text=Realtime & historical stock market,API & sentiments Global coverage). Alpha Vantage er gratis å bruke (med API-nøkkel) opp til en viss rate-limit (f.eks. 5 forespørsler per minutt), med betalte oppgraderinger for høyere datakvoter. Dette API-et kan dekke _både_ aksjer og forex via én integrasjon. Teknisk-indikator-endepunkter (f.eks. RSI, MACD) er tilgjengelige out-of-the-box[alphavantage.co](https://www.alphavantage.co/#:~:text=Realtime & historical stock market,API & sentiments Global coverage), noe som kan forenkle implementasjonen av teknisk analyse.
+    
+*   **Finnhub** – Et annen populært valg med generøs gratisplan. Finnhub tilbyr en _gratis_ sanntids-API med global dekning for aksjer, valuta og kryptobørser[finnhubio.github.io](https://finnhubio.github.io/#:~:text=With the mission of democratizing,data APIs with this comparision). Utviklere kan hente sanntidskurser fra en rekke børser (inkl. 10 forskjellige forex-meglere) og historiske data ned til tick-nivå. Finnhub leverer også fundamentaldata (selskapstall, nyheter) og en egen _“aggregate indicator”_\-funksjon som oppsummerer flere tekniske indikatorer i en enkel kjøp/selg-score. Gratisnivået har begrensninger (f.eks. 60 kall per min) før man må oppgradere. Finnhub krever API-nøkkel for bruk.
+    
+*   **Polygon.io** – En kommersiell dataleverandør som fokuserer på høyhastighets data. Polygon tilbyr sanntidsstrømming (websocket) av aksjekurser (primært US-markedet) samt forex og krypto[polygon.io](https://polygon.io/currencies#:~:text=Currencies data for your next,big idea). Historiske data er tilgjengelig helt ned til individuelle handler. API-et har en liten gratis tier (med f.eks. 15-minutters forsinkede data) og ulike betalte planer for full sanntid. Polygon er kjent for høy oppetid og lav latency, og kan være et godt valg dersom plattformen krever _streaming_ kurser og tick-data. Teknisk indikator-støtte er ikke innebygget (man får rå priser og må beregne indikatorer selv eller kombinere med en annen tjeneste).
+    
+*   **Twelve Data** – En freemium-API som ligner på Alpha Vantage i dekning. Twelve Data leverer sanntids valutakurser (oppdatert hvert minutt, eller i sanntid via WebSocket) for over 140 valutaer og 2000+ valutapar[twelvedata.com](https://twelvedata.com/forex#:~:text=)[twelvedata.com](https://twelvedata.com/forex#:~:text=Access 140 currencies and precious,that in a single API), samt aksjekurser globalt, kryptopriser og råvarer. Historiske data (intraday og daglig) tilbys. De har også endepunkter for en del vanlige tekniske indikatorer (f.eks. glidende snitt) og et Excel-plugin. Gratisnivået har relativt strenge begrensninger (f.eks. 8 forespørsler per minutt), mens betalende brukere får høyere kvoter og mer data.
+    
+*   **TAAPI.io** – En spesialisert API-tjeneste for teknisk analyse. TAAPI.io kan supplere de øvrige ved å tilby **200+ indikatorer** ferdig kalkulert for ønsket instrument og timeframe[taapi.io](https://taapi.io/#:~:text=TAAPI,on US stocks and cryptocurrencies)[taapi.io](https://taapi.io/#:~:text=). De støtter både amerikanske aksjer, alle vanlige forex-par og kryptovaluta, og leverer indikatorverdier i _sanntid_ (f.eks. RSI på 1-times chart for EUR/USD)[taapi.io](https://taapi.io/#:~:text=## Real). TAAPI krever API-nøkkel og har både en gratis test-plan og kommersielle planer avhengig av antall kall. Denne tjenesten kan vurderes dersom man vil slippe å implementere indikator-beregninger selv, men den kan også kombineres med egen kalkulasjon for mer fleksibilitet.kalkulasjon for mer fleksibilitet.
+    
+**Oppsummering av API-alternativer:** Tabellen under sammenfatter noen sentrale alternativ:
+    
+| API-leverandør    | Dekning (instrumenter)                        | Sanntid            | Historikk                   | Tekniske indikatorer   | Prisnivå (API-nøkkel)                     |
+| ----------------- | --------------------------------------------- | ------------------ | --------------------------- | ---------------------- | ----------------------------------------- |
+| **Alpha Vantage** | Aksjer (global), Forex, Krypto m.m.           | Ja (intervalldata) | Ja (intraday/daglig)        | Ja (60+ innebygde)     | Gratis (lav rate-limit); Pro tilgjengelig |
+| **Finnhub**       | Aksjer (global), Forex, Krypto, fundamentaler | Ja (live)          | Ja (tick og EOD)            | Delvis (agg. signaler) | Gratis (60/min); Pro planer               |
+| **Polygon.io**    | Aksjer (USA), Forex, Krypto                   | Ja (websocket)     | Ja (tick-nivå)              | Nei (rådata)           | Forsinket gratis; Betalt sanntid          |
+| **Twelve Data**   | Aksjer (global), Forex, Krypto, ETF           | Ja (1-min oppd.)   | Ja (intraday/EOD)           | Noen (SMA, EMA m.fl.)  | Gratis (begrenset); Betalt utvidet        |
+| **TAAPI.io**      | Aksjer (USA), Forex, Krypto (indikator-fokus) | Ja (real-time)     | Ja (historiske indikatorer) | Ja (200+ indikatorer)  | Gratis test; Betalt etter bruk            |
+    
+_Merk:_ Alle ovenstående krever registrering for å få en API-nøkkel (autentisering). For rene markedsdata-APIer er _“brukerspesifikke data”_ ikke aktuelt – API-nøkkelen identifiserer bare applikasjonen din. **Valg av API** bør styres av prosjektets krav til datakvalitet, oppdateringsfrekvens og budsjett. En anbefalt strategi er å begynne med en gratis API (f.eks. Alpha Vantage) under utvikling og testing. Deretter kan man bytte til en mer robust løsning som Finnhub eller en betalt plan hos Alpha Vantage/Polygon når antallet brukere og datakall øker. For tekniske indikatorer kan man først benytte API-ene fra Alpha Vantage (som har flere innebygget) og evt. senere vurdere TAAPI.io eller egen beregning i backend for mer avanserte indikatorer.
+
+Meglere/tjenester for saldo- og transaksjonsdata
+------------------------------------------------
+
+For å kunne importere brukerens aksje- og forex-portefølje automatisk (slik man i dag f.eks. henter krypto-saldo fra Binance via API), må vi integrere mot meglernes APIer. Flere meglere og trading-plattformer tilbyr API-tilgang til kontodata:
+
+*   **Alpaca** – Alpaca er en API-fokusert amerikansk megler som støtter aksjehandel (og i nyere tid også krypto). De tilbyr et utviklervennlig REST API hvor man enkelt kan hente kontoinformasjon, porteføljeposisjoner og historiske ordre. F.eks. kan et GET-kall til /v2/positions returnere alle åpne posisjoner (aksjer) på en konto, inkludert antall aksjer, kostpris (cost basis) og løpende markedsverdi[docs.alpaca.markets](https://docs.alpaca.markets/reference/getallopenpositions#:~:text=get https://paper). Tilsvarende endepunkter finnes for kontobalanse, ordrestatus m.m. Alpaca krever API-nøkkel/hemmelighet som utstedes når brukeren oppretter koblingen (Alpaca støtter OAuth2 for tredjapps, eller man kan be brukeren oppgi nøklene manuelt). Et fortrinn med Alpaca er at de har _paper trading_\-konti for testing, slik at utviklere kan teste integrasjonen uten ekte penger.
+    
+*   **Interactive Brokers (IBKR)** – Interactive Brokers er en av verdens største meglere og tilbyr API-tilgang til nesten alle markeder (aksjer globalt, ETF, opsjoner, futures, forex, m.m.). IB har flere API-varianter: _Client Portal Web API_ (en REST-basert API for kontodata og handel), _TWS API_ (direkte socket/TCP til deres Trader Workstation-programvare), samt FIX. Via API kan man hente både kontobalanse, posisjoner per ticker, transaksjonshistorikk osv. – i praksis alt som vises i IB’s egne systemer[interactivebrokers.com](https://www.interactivebrokers.com/en/trading/ib-api.php#:~:text=enterprise clients with robust trading,,Start integrating today). Integrasjon med IBKR er noe mer kompleks: det krever at brukeren har en IB-konto og gir tillatelse (f.eks. ved å kjøre et lokalt program for autentisering eller via en nettinnlogging for Client Portal API). Likevel vil IB-APIet være nøkkelen for brukere med tradisjonelle meglerhus. (I vår kontekst kan IB integreres etter at basisfunksjonalitet er på plass, siden det dekker avanserte brukere).
+    
+*   **OANDA** – OANDA er en populær plattform for valutatrading som tilbyr et velstrukturert REST API. Oandas API gir tilgang til kontosammendrag (balanse, urealisert gevinst/tap, margin), åpne posisjoner per valutapar, og full transaksjonslogg[developer.oanda.com](https://developer.oanda.com/rest-live-v20/account-ep/#:~:text=GET /v3/accounts/,open Position representations are provided). Ved hjelp av en personlig API-nøkkel kan vi for eksempel hente alle åpne handler (posisjoner) brukeren har, med detaljer om størrelse (units), inngangskurs og nåværende P/L. OANDA er spesielt relevant for forex-delen av prosjektet – en bruker som handler FX kan koble sin OANDA-konto, og vi kan importere valuta-posisjonene direkte. Tilsvarende tilnærming kan brukes for andre rene FX-meglere (f.eks. IG, Saxo Bank m.fl. som har API-er, men OANDA er ofte enklest for en start). Også OANDA tilbyr demokontoer som kan brukes under utvikling.
+    
+*   **Andre alternativer:** Det finnes flere andre meglere med API: _Tradier_ (USA aksjer), _TDAmeritrade API_ (USA, nå under Charles Schwab), _Robinhood uoffisiell API_ (begrensninger), _Kraken/FTX_ for forex CFD, m.fl. Et annet alternativ er aggregator-tjenester som **Plaid** eller **Yodlee** som via én integrasjon kan hente kontodata fra mange banker/meglere. Slike er dog mest utbredt i USA og kan ha begrenset støtte for trading-kontoer. For en MVP bør fokuset ligge på Alpaca (enkel integrasjon for aksjer), OANDA (valuta) og eventuelt IBKR (avanserte brukere globalt).
+    
+
+**Sikkerhet og praktisk integrasjon:** Når brukere kobler sine meglerkonti, må vi håndtere autentisering sikkert. Alpaca og OANDA bruker tokens som kan lagres kryptert i vår database (lesetilgang er nok hvis vi kun skal hente saldoer). IBKR’s Client Portal API krever at vårt system håndterer en autentiseringsprosess (som genererer en _session_ eller bruker token, siden IB ikke gir en enkel permanent nøkkel). Vi bør også vurdere _frekvens_ på henting – f.eks. oppdatere porteføljesaldo fra megler en gang i timen eller på brukerens forespørsel, i stedet for kontinuerlig, for å unngå rate limits.
+    
+Modellering av aksjer og valutapar i porteføljen
+------------------------------------------------
+
+En viktig del av utvidelsen er å utforme data- og porteføljemodellen slik at aksjer og valuta kan behandles på lik linje med krypto. Mye av den eksisterende logikken for portefølje (lagring av beholdning, kjøpspris, historikk, Monte Carlo-simulering) kan gjenbrukes, men noen tilpasninger trengs:
+
+*   **Utvidet aktiva-modell:** I stedet for kun “crypto assets”, bør vi ha en generisk _“Asset”_\-entitet som inkluderer et _asset type_\-felt (f.eks. Crypto, Stock eller Forex). Dette kan kombineres med en entitet for _“Holding”_ som representerer brukerens beholdning av et gitt asset. En holding vil lagre: referanse til asset (f.eks. ISIN eller ticker for aksje, valutapar-kode for FX, eller coin symbol for krypto), antall/enheter bruker eier, gjennomsnittlig kjøpskurs, og eventuell _kjøpsvaluta_. For aksjer holder det med antall aksjer og en kostpris (i aksjens noteringsvaluta). For en valutaposisjon kan vi modellere det som “antall enheter av base currency kjøpt”. Eksempel: En posisjon i EUR/USD (kjøpt EUR, solgt USD) kan lagres som at brukeren eier f.eks. 10 000 EUR til en snittkurs på 1,1000 (EURUSD). Dette ligner på hvordan kryptoposisjoner allerede håndteres (f.eks. 2 BTC kjøpt til $30k hver).
+    
+*   **Valutastøtte og konvertering:** I en multi-asset portefølje vil verdiene være denominert i ulike valutaer. Vi må håndtere konvertering slik at vi kan vise en samlet porteføljeverdi i brukerens foretrukne valuta (f.eks. NOK eller USD). Løsningen kan være:
+    
+    *   Lagre en _valutakode_ per asset (f.eks. USD for US-aksjer som Apple, NOK for en norsk aksje, eller for crypto kan man velge USD som referanse).
+        
+    *   Hente oppdaterte valutakurser (FX-rates) daglig eller i sanntid via API (mange av API-ene nevnt over kan også gi valutakurser).
+        
+    *   Ved visning beregne verdien av hver holding: antall \* pris\_i\_assetvaluta \* FX\_kurs(assetvaluta -> basevaluta). For instrumenter der prisen allerede er i basis- eller referansevaluta (f.eks. kanskje alt er i USD internt), blir FX-kurs = 1.
+        
+    *   Sørge for at _historiske grafer_ for porteføljeverdi eller P/L også tar høyde for valutakurser over tid, hvis nødvendig (dette kan kompliseres, så initialt kan vi vise historikk per instrument i instrumentets egen valuta, og heller fokusere konvertering på nåverdi).
+        
+*   **Unike identifikatorer:** For aksjer må vi håndtere tickere/markeder – f.eks. “EQNR” kan være Equinor på Oslo Børs, mens “EQNR” på NYSE er noe annet. Vi bør derfor utvide identifiseringen av en aksje med børs eller land (f.eks. bruke format _Ticker.Exchange_ som AAPL.US eller tickersymbolets ISIN-kode i bakgrunnen). På den måten unngår vi symbolkollisjon mellom like tickere på ulike markeder. Valutapar kan lagres som BASE/QUOTE (f.eks. “EUR/USD”) i en standardisert form. Kryptovalutaer kan fortsatt identifiseres som tidligere (f.eks. via en symbol + exchange eller CoinGecko id). Det kan være nyttig å ha en oversiktstabell for _assets_ med felter: navn, type, eventuell exchange, valutakode, etc., som portefølje-holdinger refererer til.
+    
+*   **Historikk av transaksjoner:** Slik som for krypto, bør modelleringen støtte transaksjonshistorikk (kjøp, salg, overføringer) for de nye aktivaklassene. Dette er nødvendig både for å beregne realisert/urealisert P/L korrekt og for å kjøre Monte Carlo-simuleringer basert på kostpris. Hver transaksjon kan inneholde: dato, type (kjøp/salg), antall, pris, kurtasje etc., og disse kan importeres fra megler-API der mulig (f.eks. OANDA transaksjonsliste) eller legges inn manuelt av bruker. Transaksjoner per asset gir også grunnlag for å plotte _kostbasis_ i grafer og for skatterapportering (mulig fremtidig krav).
+    
+*   **Monte Carlo-simulering:** Monte Carlo-modellen i prosjektet må utvides til å inkludere aksjer og valuta. Dette innebærer at simuleringen må hente historiske avkastningsdata for de nye aktivaklassene – f.eks. daglige prisendringer for aksjer og valutakurser – og bruke disse for å estimere volatilitet og korrelasjoner. En aksje har ofte en annen risikoprofil enn krypto, og valuta gjerne lavere volatilitet igjen. Det kan være lurt å segmentere simuleringen per aktivatype eller å bruke _porteføljesimulering_ der man simulerer totalverdien basert på korrelerte stokastiske prosesser for hvert aktivum. I starten kan man forenkle: anta uavhengighet og simulere hver assets pris som en geometrisk Brownian motion med drift/volatilitet fra historikk, så summere. På sikt kan man forbedre ved å estimere korrelasjoner mellom aktivaklasser (f.eks. aksjer vs crypto korrelasjon). Dokumentasjonen for Monte Carlo-biten bør også oppdateres til å nevne at den nå tar hensyn til flere aktivaklasser.
+    
+*   Porteføljemodellen må håndtere alle tre samtidig. Summen i brukerens ønskede valuta (si NOK) beregnes ved å hente: BTC-pris i NOK, AAPL-aksjekurs i USD konvertert til NOK, EUR/USD nåverdi konvertert til NOK (dvs. egentlig EUR -> NOK). Dette krever som nevnt at systemet har ferske valutakurser for USD/NOK og EUR/NOK. Lagring av valutakurser kan gjøres f.eks. daglig (slik at man kan vise historisk utvikling i NOK), eller man kan hente sanntids FX-kurs ved hver visning for siste verdi.
+    
+    *   _Crypto:_ 0.5 BTC, kjøpspris $20,000.
+        
+    *   _Aksje:_ 10 Apple-aksjer, kjøpspris $150 (USD) per aksje.
+        
+    *   _Valuta:_ Lang 5,000 EUR/USD, inngangskurs 1.1000.
+        
+*   **Støtte for flere konti/porteføljer:** Når vi importerer fra ulike meglere, kan en bruker ende opp med flere under-porteføljer (f.eks. en hos Alpaca, en hos OANDA, pluss kanskje manuell krypto). Det kan være lurt å modellere at en bruker har _flere_ porteføljer eller kontoer koblet, med mulighet til å se samlet oversikt. Dette vil påvirke modelleringen ved at Portfolio-objektet kan ha en type/kilde (manual, Alpaca, OANDA etc.) og en kobling til brukeren. For enkelhet i første omgang kan vi slå alt sammen til én logisk portefølje, men tagge holdings med kilde.
+    
+
+Til syvende og sist bør modellendringene dokumenteres godt. En mermaid ER-diagram i dokumentasjonen kan oppdateres til å vise nye tabeller/felter: f.eks. en Asset-entitet, en utvidet Holding som kobler bruker til asset og lagrer mengde og kost, samt en Transaction-logg koblet til holdingene.
+
+Portseido, en eksisterende løsning, illustrerer sluttmålet: de lar brukere spore _“alle investeringer på ett sted”_ på tvers av aksjer, fond og krypto, med global valutastøtte[portseido.com](https://www.portseido.com/#:~:text=All In One Portfolio Tracker). Vi ønsker å oppnå det samme – en samlet porteføljevisning uavhengig av aktivatype, med konsistente beregninger av avkastning og risiko.
+
+Særhensyn i frontend/UX for multi-asset støtte
+----------------------------------------------
+
+Å støtte aksjer og valuta i tillegg til krypto krever også noen tilpasninger i frontend og brukeropplevelse:
+
+*   **Søk og symbolhåndtering:** Brukeren bør kunne søke opp tickere og valutapar på lik linje med kryptovaluta. Det innebærer å utvide søkefunksjonen/autocomplete til å slå opp i en kombinert instrumentliste. For en god UX kan vi kategorisere treffene – f.eks. vise et liten ikon eller label for “Aksje”, “Krypto”, “FX” ved siden av hvert resultat, slik at brukeren vet om “BTC” er Bitcoin eller ticker for et selskap “BTC Inc.”. TradingView gjør noe lignende ved å ha ett søkefelt for alle markeder, men med filtrering etter type. I vår app kan vi implementere filtrering, eller minst tydeliggjøre instrumenttypen i søkeresultatene.
+    
+*   **Instrumentdetaljsider/grafer:** Graf-komponenten må kunne vise historiske kurser for aksjer og valutapar, ikke bare krypto. Her kan vi gjenbruke chart-biblioteket (f.eks. TradingView Charting Library eller Highcharts) – men vi må påse at _tidsoppløsningen_ og _markedstid_ håndteres riktig. Aksjer handles kun i børsens åpningstider, så historiske grafer vil ha “hull” i perioder børsen er stengt (kvelder, helger, helligdager). Valutamarkedet har nesten 24/5 åpningstid med helgestengning, mens krypto er 24/7. UX-messig bør vi:
+    
+    *   Markere eller håndtere stengte perioder (f.eks. grå bakgrunn i chart for når markedet er stengt, eller interpolere flat linje).
+        
+    *   Tilby justering mellom lokal tid og UTC ift. visning av aksjegrafer (TradingView lar f.eks. brukeren velge “Extended hours” visning for aksjer).
+        
+    *   Informere om kursen er forsinket. Mange gratis data (f.eks. Yahoo Finance API) er 15 min forsinket for aksjer. Vi bør et sted indikere “(Forsinket X min)” dersom vi ikke har sanntid via premium feed, slik at avanserte brukere forstår eventuelle avvik.
+        
+*   **Tekniske indikatorer og analyse:** Frontend-delen som viser indikatorer (RSI, MACD osv.) kan i stor grad forbli uendret, da de underliggende beregningene er like for alle tidsserier. Vi må likevel verifisere at verdiene gir mening for aksjer/FX (f.eks. RSI 14 på EUR/USD, eller glidende snitt på Apple-aksjen). De fleste indikatorer fungerer universelt. Men vi bør kanskje legge til flere indikatorer populære for aksjer (f.eks. volum-indikatorer som OBV, eller mønster-gjenkjenning for candlesticks). Dette kan gjøres progressivt. I UI kan vi utvide listen av tilgjengelige indikatorer i et panel.
+    
+    *   **Brukerinteraksjon:** Tegneverktøy (trendlinjer, Fibonacci etc.) som TradingView er ikke eksplisitt nevnt, men om noe slik finnes i plattformen, skal det også fungere uavhengig av aktivatype.
+        
+*   **Porteføljevisning:** I portefølje-dashbordet bør vi introdusere filtre eller kategorier slik at brukeren kan se “Alle assets” samlet, eller filtrere på bare krypto, bare aksjer, bare forex. Dette hjelper oversikten hvis porteføljen blir stor. Vi kan fargekode eller bruke små ikoner for å skille typene på listene. Videre, vi må vise _valuta_ per instrument tydelig. F.eks. kan vi vise “Apple – $150.23 (USD)” for kurs, mens for krypto kanskje “BTC – $30,000 (USD)” hvis USD er basis, og for en forexposisjon “EUR/USD – 1.0950”. Når vi viser endringer i % eller P/L, bør det stå i hvilken valuta det regnes.
+    
+    *   **Valutavalg:** Gi brukeren mulighet til å velge _“porteføljevaluta”_ for totalverdien. For en norsk bruker er det nyttig å se totalen i NOK. Vi kan ha en dropdown for dette, eller autodetekte via brukerens profil/land. Uansett, all logikk for visning vil da bruke valutakursene fra backend for konvertering (som beskrevet i modelleringen).
+        
+*   **Import og kobling av kontoer:** I frontend må det lages UI for å koble til meglerkontoer. Dette kan være under “Innstillinger” eller “Koble konto”. For Alpaca og OANDA, som bruker nøkkel/hemmelig, kan vi la brukeren lime inn disse i et skjema (og forklare hvor de finner nøklene hos megleren). For IBKR kan vi måtte sende dem til en OAuth-lignende flyt – det krever å åpne IBKR innloggingsside i popup og få et token tilbake. Detaljene kommer an på API, men UX-messig:
+    
+    *   Vis tydelig hvilke meglere som støttes (logoer for Alpaca, IB, OANDA).
+        
+    *   Veilede brukeren gjennom stegene for å autorisere.
+        
+    *   Etter vellykket kobling, vise en bekreftelse (“Din Alpaca-konto er nå koblet”) og kanskje mulighet til å gi den et kallenavn.
+        
+    *   I porteføljeoversikten kan vi vise hvilke posisjoner kommer fra hvilken kilde. F.eks. en label “(Alpaca)” ved siden av de aksjene som er hentet fra Alpaca, eller gruppert: “Alpaca - konto XXXXX: \[liste av holdings\]”. Dette gir transparens og mulighet til å skille mellom manuelle og auto-importerte data.
+        
+*   **Brukeropplevelse for ulike aktivaklasser:** Det er noen detaljer vi bør tilpasse per aktivatype:
+    
+    *   **Aksjer:** Vise _antall aksjer_ og kurs per aksje, samt dagsutvikling (%). Gjerne inkludere dagens høy/lav, omsetning (hvis data tilgjengelig). For aksjer kan nyheter og fundamentaldata være interessante å vise – Finnhub/Alphavantage leverer noe slikt – men dette kan fases inn senere.
+        
+    *   **Forex:** Vise valutaparet, gjeldende kurs (f.eks. 1 EUR = X USD). For en posisjon, vise størrelse (f.eks. “Lång 10k EUR”), urealisert P/L. Kanskje formatere kurs til 5 desimaler for de par som krever det (USD/JPY har 2 desimaler, EUR/USD typisk 5 desimaler). Vi må sikre riktig _number formatting_ basert på asset type og prisnivå.
+        
+    *   **Krypto:** Fortsette å vise som i dag, kanskje med mulighet til å denominere krypto i ulike baser (BTC i USD vs BTC i NOK – men nå som vi har fler-valuta støtte kan det løses globalt ved at bruker velger NOK som base).
+        
+*   **Ytelse og oppdateringer:** Når flere aktivaklasser spores, kan antall sanntidsoppdateringer øke (f.eks. crypto priser endres kontinuerlig, aksjer hvert sekund i åpningstiden, forex tick for tick). Vi bør vurdere hvor ofte frontend henter oppdateringer:
+    
+    *   Bruke websockets der tilgjengelig (f.eks. Finnhub eller Polygon for sanntid streaming) for å pushe kursendringer til klienten.
+        
+    *   Alternativt, poll API periodisk (f.eks. hvert 5. sekund) for åpne markeder.
+        
+    *   UI bør indikere _hvilke markeder som er åpne_. TradingView har grønn/rød indikator for marked status. Vi kan starte enklere: oppdatere aksjekurser kun i børsens åpningstider (kjent gjennom exchange info), og pause oppdatering utenom. Forex beveger seg hele døgnet på hverdagene – kanskje oppdatere i ukedagene, pause i helg.
+        
+*   **Testing av UX:** Det er viktig å brukerteste grensesnittet med scenarier som: en bruker har kun krypto (skal ikke forvirres av aksje-relaterte felter), en har kun aksjer, en har blanding. UX bør forbli intuitiv. Ideelt får vi til at det oppleves _sømløst som én konto med flere assets_, i likhet med TradingView sin papirkonto der _“Stocks, crypto, forex… alt er tilgjengelig fra én konto”_[tradingview.com](https://www.tradingview.com/features/#:~:text=Trade virtual money with our,broker simulation without any risk). Dette betyr at brukerflyten for å legge til en asset i porteføljen er den samme uansett type, at grafer og analyseverktøy er konsistente, og at man kan bytte mellom instrumenter uten å bytte modus.
+    
+*   **Tilpasset informasjon:** Muligens bør visse visuelle elementer tilpasses per aktivaklasse. Eksempel: vise _markedsplass_ for en aksje (NASDAQ, NYSE, osv.) enten i instrumentlisten eller på detaljsiden. For valutapar kan vi vise _“bid/ask spread”_ hvis tilgjengelig fra API, da FX-kurser ofte oppgis med spread. Slike detaljer vil gi avanserte brukere mer verdi og bringe oss nærmere TradingView-funksjonalitet.
+    
+
+Oppsummert må frontend justeres for å håndtere mer komplekst innhold, men målsettingen er at brukeren fortsatt oppfatter porteføljen som ett samlet verktøy. Gjennom god organisering (filtre, labels) og ved å adoptere enkelte kjente designmønstre fra TradingView og lignende tjenester, kan vi gjøre overgangen sømløs.
+
+Dokumentasjon og diagrammer – tilpasning og oppdatering
+-------------------------------------------------------
+
+Sist, men ikke minst, må vi oppdatere dokumentasjonen (README, utviklerdokumentasjon) og arkitekturskissene (inkl. mermaid-diagrammer) for å reflektere den nye funksjonaliteten. En trinnvis tilnærming anbefales her:
+
+*   **Arkitekturdiagram:** Oppdater systemarkitekturbeskrivelsen til å inkludere de nye eksterne integrasjonene. For eksempel, hvis dagens diagram viser en dataflyt fra Binance API -> Backend -> Frontend for kryptopriser, bør det nå vise ekstra bokser/piler for Market Data API for Stocks/Forex (f.eks. Alpha Vantage/Finnhub) til backend. I tillegg tegnes det inn en forbindelse fra frontend/porteføljemodul til Broker APIs (Alpaca/OANDA/IB) via backend. Dette klargjør at systemet nå kommuniserer med flere kilder. Bruk gjerne ulike farger eller stiplede linjer for å indikere _nye komponenter_ i diagrammet (slik at reviewer ser hva som er endret).
+    
+*   **Data/DOMENE-diagram:** Eventuelle mermaid **ER-diagrammer eller klassediagrammer** må oppdateres til den reviderte datamodellen. Her bør man inkludere nye entiteter som _Asset_, utvide _Portfolio/Holding_ entiteten med felter for asset\_type/currency, og legge til relasjoner til f.eks. _BrokerAccount_ hvis det modellføres eksplisitt. Diagrammet kan oppdeles i moduler: en del for bruker & portefølje, en for markedsdataintegrasjon. Sørg for å vise at en _Holding_ nå kan representere ulike typer aktiva. Om Monte Carlo-simuleringen er beskrevet med en figur, bør den oppdateres til å nevne input fra aksje-/valutadata (f.eks. en figur av en prosess som henter historiske priser fra ny API før simulering).
+    
+*   Å visualisere denne flyten i et mermaid sekvensdiagram vil hjelpe andre utviklere forstå integrasjonen.
+    
+    1.  Bruker klikker “Koble til Alpaca” i frontend.
+        
+    2.  Frontend sender brukerens API-nøkler (eller OAuth token) til backend sikkert.
+        
+    3.  Backend kaller Alpaca API og henter f.eks. /v2/positions[docs.alpaca.markets](https://docs.alpaca.markets/reference/getallopenpositions#:~:text=get https://paper) for å få alle posisjoner.
+        
+    4.  Backend parser svaret (liste av aksjer med qty, cost osv.) og lagrer/oppdaterer disse i porteføljedatabasen for brukeren.
+        
+    5.  Frontend får beskjed om å oppdatere porteføljevisningen med de nye holdings.
+        
+*   **README og brukerdokumentasjon:** Prosjektets README bør få en seksjon om den nye funksjonaliteten:
+    
+    *   Oppdatér introduksjonen til å si at plattformen nå støtter aksjer og forex i tillegg til krypto.
+        
+    *   Forklar kort hvilke datasett som brukes (for å unngå misforståelser kan man nevne “Aksjekurser leveres av Alpha Vantage (forsinket 15min)” eller hva som gjelder).
+        
+    *   Legg til instruksjoner for **konfigurasjon**: f.eks. at man må skaffe en API-nøkkel fra Finnhub og legge i .env-filen (FINNHUB\_API\_KEY=...), samt eventuelle nøkler for meglerintegrasjoner. Dette er kritisk for andre som skal kjøre prosjektet.
+        
+    *   Dokumentér eventuelle nye script eller mikrotjenester. For eksempel, hvis vi har en bakgrunnsjobb som henter valutakurser daglig, beskriv det.
+        
+    *   Oppdater evt. tabeller av funksjoner med nye rader (f.eks. “✓ Sanntidskurser aksjer”, “✓ Import av aksjeportefølje via Alpaca API”).
+        
+    *   Inkluder fremtidig arbeid/todo-liste for ting som ikke er fullt implementert ennå, men planlegges (f.eks. “støtte flere meglere som Nordnet (når API blir tilgjengelig)” etc.), så brukerne vet hva de kan forvente.
+        
+*   **Mermaid diagrams integrasjon:** Siden dokumentasjonen allerede bruker mermaid, bør vi fortsette med det for konsistens. Nye diagrammer (arkitektur eller sekvens) kan lages og eksisterende oppdateres. For å gjøre review lettere, kan vi i commit-meldinger eller dokumentasjonen tydelig merke endringer. F.eks. en figur med tittel “Architecture v2: +Stocks +Forex” som supplerer den gamle. Over tid kan man fjerne den gamle, men i overgang kan begge vises for sammenligning.
+    
+*   **Trinnvis oppdatering:** Det er lurt å oppdatere dokumentasjon parallelt med implementasjonen i etapper:
+    
+    1.  Etter å ha integrert markedsdata-API for aksjer/valuta, oppdater dokumentasjonen om hvordan data hentes (hvilken API, hvilke begrensninger).
+        
+    2.  Etter å ha utvidet databasen for portefølje, oppdater ER-diagram og beskriv nye felt/tabeller.
+        
+    3.  Når frontend-UX er klart, legg til skjermbilder i README som viser aksje- og forex-funksjonaliteten (hvis relevant). Bilder kan gjøre det lettere for brukere å forstå nytten.
+        
+    4.  Etter å ha lagt til meglerintegrasjon, beskriv i brukerdokumentasjon hvordan brukeren kobler til sin konto steg for steg (inkl. eventuelle advarsler om sikkerhet for API-nøkler).
+        
+*   **Kvalitetssikring:** Dokumentasjonsendringene bør gjennomgås av teamet for å sikre at de faktisk stemmer overens med implementasjonen. Hver ny modul (datahenting, portefølje, osv.) bør ha tilhørende diagram som forklart ovenfor. Det kan også være nyttig å utvide testdekning og legge testresultater/badger i README for å vise at tilleggsfunksjonaliteten er stabil.
+    
+
+Ved å følge disse dokumentasjonstiltakene sikrer vi at prosjektet forblir lett forståelig for nye utviklere og at all funksjonalitet (gammel og ny) er tydelig beskrevet. God dokumentasjon vil også gjøre det enklere å få inn eksterne bidragsytere om prosjektet er open source.
+
+Trinnvis plan for implementering
+--------------------------------
+
+Til slutt sammenfattes en _steg-for-steg_ implementeringsplan basert på punktene over:
+
+1.  **Integrere markedsdata for aksjer og forex:** Start med å velge og koble til en API-leverandør (f.eks. Alpha Vantage for prototyping). Implementer kall for å hente sanntidskurser og historiske prisserier for aksjer og valutapar, og verifiser at disse kan vises i eksisterende grafkomponenter. _(Dokumentasjon: Oppdater arkitekturdiagram med nytt data-API, beskriv konfigurasjon av API-nøkkel i README.)_
+    
+2.  **Teknisk analyse for nye instrumenter:** Gjenbruk eller utvid kode for indikatorer slik at de kan beregnes for aksje-/FX-data. Om API-et (Alpha Vantage) leverer indikatorverdier, kall disse endepunktene og vis dem på grafen. Test f.eks. RSI og glidende snitt på både en aksje og et valutapar. _(Dokumentasjon: Nevne i README at tekniske indikatorer nå støttes for aksjer/FX, ikke bare krypto.)_
+    
+3.  **Utvid datamodell og database:** Refaktorér porteføljelogikken til å håndtere generiske assets. Innfør nye felter/tabeller som skissert (asset type, valuta, osv.). Migrér eksisterende kryptodata til den nye strukturen. Verifiser at ingenting brekker for dagens brukere. _(Dokumentasjon: Oppdater mermaid ER-diagram med nye entiteter/felter.)_
+    
+4.  **Backend: håndtering av multi-asset portefølje:** Implementer backend-funksjoner for å legge til aksje- og forex-holdings i porteføljen (f.eks. nye API-endepunkter eller utvide eksisterende /addHolding til å støtte ulike typer). Inkluder valutakonvertering ved uthenting av totalportefølje. Sørg for at Monte Carlo-modulen kan trekke historikk for nye assets og at simuleringene kjører uten feil. _(Dokumentasjon: Forklar i teknisk dokumentasjon hvordan valutakonvertering er implementert og hvordan simuleringen nå fungerer for multi-asset.)_
+    
+5.  **Frontend: støtte for aksjer og forex i UI:** Oppdater brukergrensesnittet:
+    
+    *   Utvid søkefunksjonen for å slå opp aksjer/valutapar.
+        
+    *   Juster porteføljesiden for å vise nye datafelter (valuta, type, osv.) og legg til filter/gruppe-funksjonalitet om nødvendig.
+        
+    *   Test visning av en blandet portefølje.
+        
+    *   Implementer valg av basisvaluta for visning og verifiser totalberegninger._(Dokumentasjon: Ta nye skjermbilder av UI med aksjer/FX og legg i README for illustrasjon.)_
+        
+6.  **Megler-API integrasjon (porteføljesync):** Velg én megler som pilot (f.eks. Alpaca for aksjer) og implementer integrasjonen:
+    
+    *   Lag UI for innlegging av API-nøkkel/OAuth.
+        
+    *   På backend, skriv modul som bruker nøkkelen til å hente kontodata (posisjoner, balanse).
+        
+    *   Lagre de hentede posisjonene i brukerens portefølje (merke dem som importert fra megler).
+        
+    *   Sett opp rutiner for oppdatering (manuell “sync” knapp eller automatisk periodic).
+        
+    *   Test end-to-end: Bruk en testkonto hos Alpaca, legg inn nøkkel, importer posisjoner, og se at de dukker opp korrekt i porteføljen.
+        
+    *   Deretter, implementer tilsvarende for OANDA (forex) – mye kode kan gjenbrukes med ulike endepunkter._(Dokumentasjon: Legg til egen seksjon “Koble til meglerkonto” i README med brukerveiledning. Oppdater arkitekturdiagram med datastream fra megler til vårt system.)_
+        
+7.  **Finpuss og utvidelser:** Etter kjerneimplementasjonen, håndter resterende ønskede TradingView-lignende funksjoner:
+    
+    *   F.eks. legge til støtte for flere indikatorer, implementere alert-funksjoner (prisalarmer) for alle typer instrumenter, forbedre graf-funksjonalitet (tegneverktøy).
+        
+    *   Optimaliser ytelse dersom dataoppdateringer er trege (introducer websockets ved behov, caching av API-svar etc.).
+        
+    *   Utvid meglerintegrasjon til flere tjenester hvis relevant interesse.
+        
+    *   Kjør beta-testing med noen brukere for å samle feedback på UX – juster grensesnitt for bedre brukervennlighet._(Dokumentasjon: Oppdater kontinuerlig – f.eks. changelog i README – slik at forbedringer kommuniseres tydelig.)_
+        
+8.  **Kontroll og lansering:** Gjennomfør fullstendige tester av hele systemet med den nye funksjonaliteten aktivert:
+    
+    *   Enhetstester for konverteringsfunksjoner, API-klienter, osv.
+        
+    *   Integrasjonstester for at porteføljesync faktisk oppdaterer database og at frontend reflekterer endringene.
+        
+    *   Sikkerhetssjekk for lagring av API-nøkler (kryptering) og at ingen sensitive data logges.
+        
+    *   Oppdater dokumentasjon en siste gang for versjon 2.0 av plattformen.
+        
+    *   Rull ut til produksjon gradvis, kanskje med en feature toggle for nye aktivaklasser hvis mulig, før full lansering.
+        
+
+Ved å følge denne planen stegvis, vil prosjektet få en strukturert overgang til å bli et multi-asset sporingsverktøy. Dette reduserer risikoen og lar oss levere verdi til brukerne inkrementelt – først ved å tilby kursgrafer for aksjer/FX, deretter porteføljeføring, og til slutt automatisert import og avanserte analyser. Plattformen vil da nærme seg TradingView i funksjonalitet, samtidig som vi beholder styrken i den eksisterende kryptodelen.
+
+**Kilder:** De siterte referansene over (med 【】) peker til relevante dokumenter og API-kilder som underbygger anbefalingene:
+
+*   Alpha Vantage-dokumentasjon[alphavantage.co](https://www.alphavantage.co/#:~:text=Realtime & historical stock market,API & sentiments Global coverage)
+    
+*   Finnhub introduksjon[finnhubio.github.io](https://finnhubio.github.io/#:~:text=With the mission of democratizing,data APIs with this comparision)
+    
+*   Alpaca API-dokumentasjon[docs.alpaca.markets](https://docs.alpaca.markets/reference/getallopenpositions#:~:text=get https://paper)
+    
+*   Interactive Brokers API info[interactivebrokers.com](https://www.interactivebrokers.com/en/trading/ib-api.php#:~:text=enterprise clients with robust trading,,Start integrating today)
+    
+*   OANDA API-dokumentasjon[developer.oanda.com](https://developer.oanda.com/rest-live-v20/account-ep/#:~:text=GET /v3/accounts/,open Position representations are provided)
+    
+*   TradingView funksjonsbeskrivelse[tradingview.com](https://www.tradingview.com/features/#:~:text=Trade virtual money with our,broker simulation without any risk), m.fl.
 
 </details>
