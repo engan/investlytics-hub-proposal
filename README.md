@@ -56,7 +56,9 @@ Ved å avgrense omfanget som over sikrer vi at MVP leverer verdifull funksjonali
 Arkitektur
 ----------
 
-Den oppdaterte arkitekturen for Investlytics Hub er designet for å støtte sanntidsdata, eksterne integrasjoner og AI-analyse innenfor en modulær og skalerbar struktur. Løsningen følger en klient-tjener-modell med en webbasert frontend og en Python-basert backend. Backend tilbyr et REST API (samt WebSocket for sanntidsoppdateringer) som frontenden (og eventuelle andre klienter) bruker. I tillegg er det integrasjon mot eksterne datakilder (børs-APIer, on-chain APIer, AI-tjenester). Hovedkomponentene er:
+Den oppdaterte arkitekturen for Investlytics Hub er designet for å støtte sanntidsdata, eksterne integrasjoner og AI-analyse innenfor en modulær og skalerbar struktur. Løsningen følger en klient-tjener-modell med en webbasert frontend og en Python-basert backend. Backend tilbyr et REST API (samt WebSocket for sanntidsoppdateringer) som frontenden (og eventuelle andre klienter) bruker. I tillegg er det integrasjon mot eksterne datakilder (børs-APIer, on-chain APIer, AI-tjenester). 
+
+#### Hovedkomponenter:
 
 *   **Frontend:** En webklient (single-page application) skrevet i et moderne rammeverk (f.eks. React) som kjører i nettleser. Denne kommuniserer med backend over HTTPS (REST API for forespørsler/response og WebSocket for løpende oppdateringer). Frontend-en presenterer dashbord, grafer, porteføljeinformasjon og AI-innsikter til brukeren i sanntid. (Eventuell mobilapp i fremtiden kan bruke de samme API-ene.)
     
@@ -82,8 +84,9 @@ Den oppdaterte arkitekturen for Investlytics Hub er designet for å støtte sann
         
     *   **AI-tjenester:** f.eks. **OpenAI API** for å utføre språkbasert analyse (som nyhetssentiment) eller til og med for å generere prisprediksjoner basert på trenede modellert, samt mulighet for å integrere **HuggingFace-modeller** for sentimentanalyse av sosiale medier. Hvis nødvendig kan et ML-rammeverk som PyTorch brukes bak kulissene, men i første omgang benyttes eksterne AI-tjenester for rask implementering.
         
+#### Arkitekturskisse:
 
-Arkitekturskisse som illustrerer samspillet mellom frontend, backend og eksterne komponenter:
+Illustrerer samspillet mellom frontend, backend og eksterne komponenter:
 
 ```mermaid
 flowchart TD
@@ -153,6 +156,30 @@ flowchart TD
 _Forklaring:_ Frontend-klienten (webappen) kommuniserer med FastAPI-backenden via HTTPS REST-kall for vanlige forespørsler (f.eks. hente porteføljedata) og eventuelt WebSocket for å motta sanntids kurser uten polling. Backenden henter data fra eksterne kilder: direkte fra børsers APIer for live trading-data og brukerens kontoinformasjon, fra on-chain APIer (som Moralis) for f.eks. NFT-oversikt eller transaksjonshistorikk, og fra markedsdata-APIer som CoinGecko for generell info. AI-modulen i backenden kan kalle ut til en AI-tjeneste (OpenAI, etc.) for å få f.eks. en prediksjon, som så sendes tilbake til frontend. Alle disse modulene samhandler med databasen ved behov (lagring av brukerdata, caching av nylige spørringsresultater, historiske priser for analyse etc.).
 
 Arkitekturen er modulær slik at nye datakilder eller moduler (f.eks. flere AI-modeller, flere børser) kan legges til uten store omveltninger. FastAPI-valget gir også automatisk dokumentasjon av API-et (Swagger UI), noe som er nyttig for både utviklere og eventuelle tredjepartsintegrasjoner. Løsningen planlegges containerisert (Docker) for enkel distribusjon, og kan settes opp i skytjenester for skalering ved behov.
+
+#### Sekvensdiagram – eksempel dataflyt
+
+For å binde sammen de ulike delene av systemet, viser vi avslutningsvis et eksempel på dataflyten i en typisk forespørsel i Investlytics Hub. Under er et sekvensdiagram som illustrerer hvordan en forespørsel om AI-basert prisprognose for en kryptovaluta forløper gjennom systemet:
+
+```mermaid
+sequenceDiagram
+    participant Bruker as Bruker (Frontend)
+    participant API as FastAPI Backend
+    participant AI as Ekstern AI-tjeneste
+    Bruker->>API: Kall til `/api/v1/ai/crypto_predict?asset=BTC`
+    activate API
+    API->>MarketAPI: Hent siste pris- og trenddata for BTC (for kontekst)
+    API-->>AI: Sender data (historikk, nyheter) for prediksjon
+    activate AI
+    AI-->>API: Returnerer prognose (f.eks. forventet % endring)
+    deactivate AI
+    API->>DB: Lager prediksjonsresultat i DB (for logging)
+    API-->>Bruker: JSON-respons med AI-basert prisprognose
+    deactivate API
+    Bruker->>Bruker: Viser prognose i UI (f.eks. "BTC +5% neste 24t")
+``` 
+
+I dette eksemplet ser vi at frontend-brukeren utløser en AI-analyse via REST API-et. Backenden (API) henter først relevant markedsdata (kanskje trengs for kontekst), deretter kaller en ekstern AI-tjeneste. Svaret lagres og sendes tilbake til frontend som presenterer det for brukeren. Lignende flyt vil gjelde for andre operasjoner: f.eks. når brukeren åpner porteføljesiden vil frontend kalle et endepunkt /api/v1/portfolio hvorpå backenden henter siste priser, brukerens beholdninger fra DB (eller børs via API), kanskje NFT-listen via Moralis, og sammenstiller et svar. Disse sekvensene er planlagt nøye for å gi rask respons til brukeren til tross for mange bevegelige deler.
 
 #### Rate Limiting
 
@@ -240,15 +267,15 @@ Sikkerhet
 
 Sikkerhet har høy prioritet i Investlytics Hub, gitt den sensitive naturen til finansielle data og brukertilliten som kreves. Prosjektet har derfor implementert flere **sikkerhetstiltak** og forbedringer for å beskytte både systemet og brukerne:
 
+#### Generelle tiltak
+
 *   **HTTPS overalt:** All kommunikasjon mellom frontend-klienten og serveren skjer over kryptert HTTPS. Dette forhindrer avlytting og «man-in-the-middle»-angrep ved overføring av data (inkludert JWT og andre sensitive data).
     
 *   **Sikker databasebruk:** Databaseforespørsler gjøres ved hjelp av sikre metoder (f.eks. ORM eller parametrisert SQL) for å unngå SQL-injeksjon og sikre dataintegritet.
     
 *   **Passord og hashing:** Brukerpassord lagres ikke i klartekst. Ved registrering hashes passord med en sterk enveis hash-funksjon (som bcrypt eller Argon2) kombinert med salt, slik at brukerinformasjon er beskyttet selv om databasen skulle kompromitteres.
     
-
 I tillegg til disse generelle tiltakene er det gjennomført spesifikke forbedringer på sikkerhetsfronten:
-
 
 #### JWT-håndtering 
 
@@ -779,31 +806,6 @@ God dokumentasjon er kritisk for et vellykket prosjekt, spesielt gitt den brede 
     
 
 Til slutt vil vi sørge for at all dokumentasjon lagres sammen med koden (evt. i GitHub Wiki for enklere brukerdoku) slik at det ikke blir liggende lokalt hos enkeltpersoner. Dette gjør det enklere for nye utviklere å sette seg inn i prosjektet og for brukere å finne informasjon. Med en helhetlig dokumentasjonsstrategi som dette unngår vi at den nye fokuseringen på kryptotrading og AI skaper forvirring – alt skal være tydelig beskrevet, fra toppnivå målsetninger ned til hver API-rute.
-
-Sekvensdiagram – eksempel dataflyt
-----------------------------------
-
-For å binde sammen de ulike delene av systemet, viser vi avslutningsvis et eksempel på dataflyten i en typisk forespørsel i Investlytics Hub. Under er et sekvensdiagram som illustrerer hvordan en forespørsel om AI-basert prisprognose for en kryptovaluta forløper gjennom systemet:
-
-```mermaid
-sequenceDiagram
-    participant Bruker as Bruker (Frontend)
-    participant API as FastAPI Backend
-    participant AI as Ekstern AI-tjeneste
-    Bruker->>API: Kall til `/api/v1/ai/crypto_predict?asset=BTC`
-    activate API
-    API->>MarketAPI: Hent siste pris- og trenddata for BTC (for kontekst)
-    API-->>AI: Sender data (historikk, nyheter) for prediksjon
-    activate AI
-    AI-->>API: Returnerer prognose (f.eks. forventet % endring)
-    deactivate AI
-    API->>DB: Lager prediksjonsresultat i DB (for logging)
-    API-->>Bruker: JSON-respons med AI-basert prisprognose
-    deactivate API
-    Bruker->>Bruker: Viser prognose i UI (f.eks. "BTC +5% neste 24t")
-``` 
-
-I dette eksemplet ser vi at frontend-brukeren utløser en AI-analyse via REST API-et. Backenden (API) henter først relevant markedsdata (kanskje trengs for kontekst), deretter kaller en ekstern AI-tjeneste. Svaret lagres og sendes tilbake til frontend som presenterer det for brukeren. Lignende flyt vil gjelde for andre operasjoner: f.eks. når brukeren åpner porteføljesiden vil frontend kalle et endepunkt /api/v1/portfolio hvorpå backenden henter siste priser, brukerens beholdninger fra DB (eller børs via API), kanskje NFT-listen via Moralis, og sammenstiller et svar. Disse sekvensene er planlagt nøye for å gi rask respons til brukeren til tross for mange bevegelige deler.
 
 Risikovurdering og tiltak 
 -------------------------
