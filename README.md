@@ -619,29 +619,29 @@ Gantt-oversikt (tentativ tidslinje) for faser og milepæler beskrevet over:
 ```mermaid
 %%{init:{ "gantt":{ "leftPadding":140,"rightPadding":50 } }}%%
 gantt
-    title Investlytics Hub – Roadmap (≈ 12 uker)
+    title Investlytics Hub – Roadmap (≈ 22 uker)
     dateFormat  YYYY-MM-DD
 
     section Fase 0 – Grunnoppsett
     Repo & Docker           :done,    task0, 2025-06-02, 7d
 
     section Fase 1 – Markedsdata
-    Live priser API         :active,  task1, after task0, 10d
-    Dashboard UI            :         task2, after task1, 7d
+    Live priser API         :active,  task1, after task0, 20d
+    Dashboard UI            :         task2, after task1, 15d
 
     section Fase 2 – Portefølje
-    Auth + CEX-sync         :         task3, after task2, 14d
+    Auth + CEX-sync         :         task3, after task2, 28d
 
     section Fase 3 – AI + Digital assets
-    AI prognose             :crit,    task4, after task3, 10d
-    NFT visning (lett)      :         task5, after task4, 5d
+    AI prognose             :crit,    task4, after task3, 20d
+    NFT visning (lett)      :         task5, after task4, 10d
 
     section Fase 4 – Avansert analyse
-    Monte Carlo             :         task6, after task5, 10d
-    On-chain metrics        :         task7, after task6, 7d
+    Monte Carlo             :         task6, after task5, 20d
+    On-chain metrics        :         task7, after task6, 14d
 
     section Fase 5 – Finish & Launch
-    Test / polish / deploy  :milestone, task8, after task7, 10d
+    Test / polish / deploy  :milestone, task8, after task7, 20d
 
 
 ```
@@ -687,10 +687,10 @@ investlytics-hub/
 ├── .vscode/                        # VS Code-workspace (launch, settings, anbefalte extensions)
 │
 ├── frontend/                       # React-(evt. Next.js) SPA
-│   ├── public/
+│   ├── public/                     # Statiske filer (index.html, favicon, ...)
 │   └── src/
 │       ├── assets/                 # Ikoner, bilder, fonter
-│       ├── components/
+│       ├── components/             # Gjenbrukbare UI-komponenter
 │       │   ├── common/             # Buttons, inputs, modals …
 │       │   ├── charts/             # Recharts/D3.js wrappers
 │       │   ├── dashboard/          # Kurs-ticker, pris-widgets, AI-cards
@@ -702,18 +702,18 @@ investlytics-hub/
 │       ├── services/               # REST & WS-klienter (axios, socket.io, signalR)
 │       ├── styles/                 # Tailwind config, globale SCSS/vars
 │       ├── utils/                  # f.eks. formatters, math helpers
-│       ├── App.tsx
-│       └── main.tsx              
+│       ├── App.tsx                 # Hovedapplikasjonskomponent
+│       └── main.tsx                # Inngangspunkt som render App
 │   ├── tests/                      # Jest / React-Testing-Library
-│   ├── .eslintrc.js
-│   └── vite.config.ts
+│   ├── .eslintrc.js                # ESLint konfigurasjon (JS/TS lint regler)
+│   └── vite.config.ts              # Build/verktøy-konfigurasjon (hvis Vite brukes)
 │
 ├── backend/                        # FastAPI-applikasjon
 │   ├── app/
 │   │   ├── main.py                 # create_app(), router-registrering
 │   │   ├── core/                   # config.py, security.py, logging.py
 │   │   ├── api/
-│   │   │   ├── deps.py
+│   │   │   ├── deps.py             # Dependencies (f.eks. get_db, auth)
 │   │   │   └── v1/
 │   │   │       ├── endpoints/
 │   │   │       │   ├── market_data.py        # priser, orderbook
@@ -722,11 +722,11 @@ investlytics-hub/
 │   │   │       │   ├── simulation.py         # Monte-Carlo endepunkt
 │   │   │       │   ├── digital_asset_min.py  # minimal NFT-oversikt
 │   │   │       │   └── health.py
-│   │   │       └── schemas.py
+│   │   │       └── schemas.py                # Pydantic-modeller for request/response (kan deles per modul)
 │   │   ├── db/
-│   │   │   ├── database.py
-│   │   │   ├── base_class.py
-│   │   │   └── models/
+│   │   │   ├── base_class.py                 # Deklarativ base for ORM-modeller
+│   │   │   ├── database.py                   # Opprettelse av DB-engine og Session
+│   │   │   └── models/                       # SQLAlchemy-modeller
 │   │   │       ├── user.py
 │   │   │       ├── portfolio.py
 │   │   │       ├── trade.py
@@ -746,26 +746,27 @@ investlytics-hub/
 │   │   └── worker/                           # Celery/APS-jobs (pris-polling, sync)
 │   ├── tests/                                # PyTest enhet + integrasjon
 │   │   └── api_v1/
-│   ├── Dockerfile
-│   ├── pyproject.toml / requirements.txt
-│   └── .env.example
+│   ├── Dockerfile                            # Docker-image bygg for backend
+│   ├── pyproject.toml                        # Prosjektkonfig hvis Poetry/PDM brukes (alternativ til requirements.txt)
+│   ├── requirements.txt                      # Python-avhengigheter (hvis man ikke bruker pyproject)
+│   └── .env.example                          # Eksempel på miljøvariabler for backend (aldri commite faktiske .env)
 │
-├── workflows/                    # n8n (eller alternativt: GitHub Actions Workflows)
-│   ├── flows/
+├── workflows/                              # n8n workflows og integrasjonsfiler (eller alternativt: GitHub Actions Workflows)
+│   ├── flows/                              # Eksporterte n8n workflow-filer (JSON)
 │   │   ├── daily_market_update.json
 │   │   ├── crypto_sentiment_ingest.json
-│   │   └── trade_execution_signal.json      # (senere fase)
-│   └── README.md
+│   │   └── trade_execution_signal.json     # (senere fase)
+│   └── README.md                           # Instruksjoner for oppsett og bruk av workflows
 │
 ├── simulations/                  # Valgfritt – Python-/Rust-/WASM-kode portert fra mc-simulations
 │
 ├── scripts/                      # Dev&ops hjelpeskript
-│   ├── setup_dev.sh
-│   ├── run_dev.sh
-│   └── initial_data.py
+│   ├── setup_dev.sh              # Skript for førstegangs oppsett (f.eks. opprette .env fra .env.example)
+│   ├── run_dev.sh                # Skript for å starte alle tjenester i dev (frontend, backend, db, cache, n8n)
+│   └── initial_data.py           # Skript for å populere databasen med testdata
 │
 ├── infrastructure/               # thin README-link
-│   ├── docker-compose.yml        # DB, Redis, Backend, Frontend, n8n
+│   ├── docker-compose.yml        # Docker Compose for å kjøre hele stakken lokalt (DB, Redis, Backend, Frontend, ev. n8n)
 │   ├── k8s/                      # K8s manifester / Helm chart (valgfritt)
 │   └── ci-cd/                    # GitHub Actions-workflow-yaml
 │
@@ -774,11 +775,11 @@ investlytics-hub/
 │   ├── api/
 │   └── pnft-background.md        # Kort om pNFT-prosjektet & digital-asset-kobling
 │
-├── .gitignore
-├── README.md
-├── CONTRIBUTING.md
-├── ROADMAP.md
-└── LICENSE
+├── .gitignore                    # Utelukkelse av sensitive/bygde filer (node_modules, __pycache__, .env, etc.)
+├── README.md                     # Hoved-dokumentasjon for prosjektet (introduksjon, installasjon, bruk)
+├── CONTRIBUTING.md               # Retningslinjer for bidragsytere
+├── ROADMAP.md                    # Utdypende roadmap og milepæler
+└── LICENSE                       # Valgt lisens for prosjektet (f.eks. MIT)
 ```
 
 _Forklaring:_ Mappene **backend/** og **frontend/** holder adskilt kodebasen for henholdsvis backend-API og frontend-applikasjonen. Under backend er koden ytterligere strukturert etter “separation of concerns” (API, services, models, etc.), noe som gjør det enklere å navigere – f.eks. all kode for eksterne integrasjoner (CEX/DEX API, AI API) ligger under services/ kanskje som egne moduler (exchange\_service.py, ai\_service.py etc.). Frontend-delen følger en typisk React-prosjektstruktur med komponenter og sider.
